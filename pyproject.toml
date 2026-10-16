@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "discoclaro"
 version = "0.1.0"
 description = "Explica por qué se llena tu disco: escanea, clasifica lo que ocupa espacio y detecta qué creció."
+readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Suárez Burgos Hebert" }]
