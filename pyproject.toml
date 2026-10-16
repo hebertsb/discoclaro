@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "discoclaro"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Explica por qué se llena tu disco: escanea, clasifica lo que ocupa espacio y detecta qué creció."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,6 +14,9 @@ dependencies = []
 
 [project.scripts]
 discoclaro = "discoclaro.interfaces.cli:main"
+
+[tool.hatch.version]
+path = "src/discoclaro/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/discoclaro"]
