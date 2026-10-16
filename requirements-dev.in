@@ -1,0 +1,5 @@
+# Herramientas de desarrollo (no son dependencias de ejecución).
+# Solo las directas, con versión exacta. `requirements-dev.txt` se genera a partir de
+# este archivo con todas las dependencias y sus hashes (ver docs/DEPENDENCIAS.md).
+pytest==9.1.1
+ruff==0.17.1

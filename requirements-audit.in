@@ -1,0 +1,4 @@
+# Auditoría de vulnerabilidades. Se instala en su propio entorno (`.venv-audit`), no en `.venv`.
+# Solo la herramienta directa, con versión exacta. `requirements-audit.txt` se genera a
+# partir de este archivo con todas las dependencias y sus hashes (ver docs/DEPENDENCIAS.md).
+pip-audit==2.10.1

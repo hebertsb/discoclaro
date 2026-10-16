@@ -1,5 +1,6 @@
 # Entornos y cachés de Python
 .venv/
+.venv-audit/
 __pycache__/
 *.py[cod]
 .pytest_cache/
