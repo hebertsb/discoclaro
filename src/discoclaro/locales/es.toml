@@ -1,0 +1,10 @@
+# Textos para el usuario en español (idioma por defecto).
+# Las claves son las mismas en todos los idiomas; los {nombre} son marcadores.
+
+[cli]
+description = "Explica por qué se llena tu disco."
+
+[cli.commands]
+scan = "Escanea los discos y guarda una foto (aún sin implementar)."
+report = "Muestra un informe de lo que ocupa espacio (aún sin implementar)."
+growth = "Compara dos fotos y muestra qué creció (aún sin implementar)."

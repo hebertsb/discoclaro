@@ -1,0 +1,10 @@
+# User-facing texts in English.
+# Keys are the same in every language; {name} are placeholders.
+
+[cli]
+description = "Explains why your disk is filling up."
+
+[cli.commands]
+scan = "Scans the disks and saves a snapshot (not implemented yet)."
+report = "Shows a report of what takes up space (not implemented yet)."
+growth = "Compares two snapshots and shows what grew (not implemented yet)."

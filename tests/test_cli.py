@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from discoclaro import __version__
+from discoclaro.i18n import t
 from discoclaro.interfaces.cli import COMMANDS, main
 
 
@@ -31,6 +32,16 @@ def test_missing_or_unknown_subcommand_is_an_error(argv, capsys):
         main(argv)
     assert exc.value.code == 2
     capsys.readouterr()
+
+
+def test_help_texts_come_from_the_catalog(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+    assert exc.value.code == 0
+    shown = " ".join(capsys.readouterr().out.split())
+    assert t("cli.description") in shown
+    for command in COMMANDS:
+        assert t(f"cli.commands.{command}") in shown
 
 
 def test_console_script_points_to_main():
