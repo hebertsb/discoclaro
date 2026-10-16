@@ -20,3 +20,15 @@ path = "src/discoclaro/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/discoclaro"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

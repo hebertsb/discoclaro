@@ -1,0 +1,4 @@
+# Herramientas de desarrollo (no son dependencias de ejecución).
+# Versiones exactas; los hashes se agregan en la tarea T0.9.
+pytest==9.1.1
+ruff==0.17.1
