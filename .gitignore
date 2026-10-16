@@ -1,0 +1,19 @@
+# Entornos y cachés de Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Construcción
+dist/
+build/
+
+# Frontend
+node_modules/
+
+# Bases de datos de escaneo (rutas reales del usuario: nunca se versionan)
+*.db
+*.db-wal
+*.db-shm
