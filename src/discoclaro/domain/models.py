@@ -1,6 +1,7 @@
 """Datos puros del núcleo: sin disco, sin SQLite, sin red y sin Windows."""
 
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,3 +101,43 @@ class SystemFile:
             raise ValueError("a system file needs a path")
         if self.size_bytes < 0:
             raise ValueError("system file size cannot be negative")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Snapshot:
+    """Una foto de un volumen: lo que se midió en un momento dado.
+
+    `taken_at` lleva siempre zona horaria. `id` lo asigna la base al guardar la foto,
+    así que vale `None` en una foto que aún no se guardó.
+    """
+
+    taken_at: datetime
+    volume: str
+    total_bytes: int
+    used_bytes: int
+    free_bytes: int
+    scanned_bytes: int
+    system_files_bytes: int
+    unreadable_bytes: int
+    unreadable_count: int
+    duration_s: float
+    is_admin: bool
+    id: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.taken_at.utcoffset() is None:
+            raise ValueError("taken_at needs a time zone")
+        if not self.volume:
+            raise ValueError("a snapshot needs a volume")
+        numbers = (
+            self.total_bytes,
+            self.used_bytes,
+            self.free_bytes,
+            self.scanned_bytes,
+            self.system_files_bytes,
+            self.unreadable_bytes,
+            self.unreadable_count,
+            self.duration_s,
+        )
+        if min(numbers) < 0:
+            raise ValueError("snapshot sizes, counts and duration cannot be negative")

@@ -1,10 +1,18 @@
 """Pruebas de los modelos del núcleo."""
 
 import dataclasses
+from datetime import UTC, datetime
 
 import pytest
 
-from discoclaro.domain.models import Node, ScanResult, SystemFile, Unreadable, Volume
+from discoclaro.domain.models import (
+    Node,
+    ScanResult,
+    Snapshot,
+    SystemFile,
+    Unreadable,
+    Volume,
+)
 
 
 def make_volume(**changes):
@@ -151,3 +159,68 @@ def test_system_file_rejects_an_empty_path_and_negative_sizes():
 
 def test_a_system_file_of_zero_bytes_is_valid():
     assert SystemFile("C:\\swapfile.sys", 0).size_bytes == 0
+
+
+def make_snapshot(**changes):
+    fields = {
+        "taken_at": datetime(2026, 10, 17, 12, 0, tzinfo=UTC),
+        "volume": "C:",
+        "total_bytes": 1000,
+        "used_bytes": 400,
+        "free_bytes": 600,
+        "scanned_bytes": 350,
+        "system_files_bytes": 40,
+        "unreadable_bytes": 0,
+        "unreadable_count": 2,
+        "duration_s": 12.5,
+        "is_admin": False,
+    }
+    return Snapshot(**{**fields, **changes})
+
+
+def test_snapshot_keeps_its_data_and_has_no_id_until_it_is_saved():
+    snapshot = make_snapshot()
+    assert snapshot.volume == "C:"
+    assert (snapshot.total_bytes, snapshot.used_bytes, snapshot.free_bytes) == (
+        1000,
+        400,
+        600,
+    )
+    assert snapshot.is_admin is False
+    assert snapshot.id is None
+    assert make_snapshot(id=7).id == 7
+
+
+def test_snapshot_is_immutable():
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        make_snapshot().volume = "D:"
+
+
+def test_snapshot_needs_a_time_zone_and_a_volume():
+    with pytest.raises(ValueError):
+        make_snapshot(taken_at=datetime(2026, 10, 17, 12, 0))
+    with pytest.raises(ValueError):
+        make_snapshot(volume="")
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "total_bytes",
+        "used_bytes",
+        "free_bytes",
+        "scanned_bytes",
+        "system_files_bytes",
+        "unreadable_bytes",
+        "unreadable_count",
+        "duration_s",
+    ],
+)
+def test_snapshot_rejects_negative_numbers(field):
+    with pytest.raises(ValueError):
+        make_snapshot(**{field: -1})
+
+
+def test_snapshot_arguments_must_be_named():
+    with pytest.raises(TypeError):
+        Snapshot(datetime(2026, 10, 17, tzinfo=UTC), "C:")
