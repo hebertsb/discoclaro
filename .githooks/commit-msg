@@ -1,0 +1,16 @@
+#!/bin/sh
+# Hook de Git: rechaza mensajes de commit que nombren a una herramienta de IA como autora.
+# Se activa una vez por clon con:  git config core.hooksPath .githooks
+here=$(dirname "$0")
+script="$here/../tools/check_authorship.py"
+
+if command -v py >/dev/null 2>&1; then
+    exec py -3 "$script" --message-file "$1"
+elif command -v python3 >/dev/null 2>&1; then
+    exec python3 "$script" --message-file "$1"
+elif command -v python >/dev/null 2>&1; then
+    exec python "$script" --message-file "$1"
+fi
+
+echo "commit-msg: no se encontro Python para revisar el mensaje del commit" >&2
+exit 1
