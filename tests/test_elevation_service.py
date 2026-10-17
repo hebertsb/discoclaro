@@ -194,7 +194,7 @@ def test_no_warning_callback_means_the_writable_check_is_not_even_run(tmp_path):
 
 def test_already_elevated_skips_the_integrity_check_entirely(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        scan_service, "run_scan", lambda target, data_dir: "the summary"
+        scan_service, "run_scan", lambda target, data_dir, **kw: "the summary"
     )
 
     def forbidden_check():
@@ -298,7 +298,7 @@ def test_if_this_process_is_already_elevated_the_scan_runs_here(tmp_path, monkey
     monkeypatch.setattr(
         scan_service,
         "run_scan",
-        lambda target, data_dir: calls.append((target, data_dir)),
+        lambda target, data_dir, **kw: calls.append((target, data_dir)),
     )
     runner = FakeRunner()
     run(tmp_path, runner, "c:", is_admin=lambda: True)

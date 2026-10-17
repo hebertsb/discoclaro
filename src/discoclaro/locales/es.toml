@@ -13,6 +13,7 @@ growth = "Compara dos fotos y muestra qué creció (aún sin implementar)."
 target_name = "DESTINO"
 target_help = "Disco (por ejemplo C:) o carpeta que se escanea."
 admin_help = "Escanea con permisos de administrador; Windows pedirá permiso. Solo discos completos, como C:."
+restart_help = "Ignora un punto de control anterior y empieza el escaneo de cero."
 
 [cli.report]
 target_name = "DESTINO"
@@ -26,6 +27,9 @@ thousands_separator = "."
 
 [scan]
 done = "Escaneo de {target} terminado en {duration}."
+progress = "Escaneando… {folders} carpetas · {files} archivos · {size} · {path}"
+resumed = "Se retomaron {count} carpetas de primer nivel de una pausa anterior."
+paused = "Escaneo pausado. Corré `discoclaro scan {target}` para seguir donde se quedó."
 counts = "Carpetas: {folders} · Archivos: {files} · Enlaces omitidos: {links}"
 space_volume = "Escaneado: {scanned} de {used} usados (volumen de {total}, {free} libres)."
 space_folder = "Escaneado: {scanned} (el volumen usa {used} de {total} y tiene {free} libres)."
@@ -64,3 +68,4 @@ report_no_snapshots = "No hay ninguna foto guardada todavía. Corre `discoclaro 
 report_no_snapshot_for_target = "No hay ninguna foto guardada de {target}. Corre `discoclaro scan {target}` primero."
 integrity_failed = "No se pidió el permiso de administrador: lo instalado no coincide con lo esperado ({target}). Reinstala discoclaro y vuelve a intentarlo."
 unsafe_data_location = "No se escribió nada: {target} es un enlace o tiene más de un nombre, así que no es seguro escribir ahí. Revísalo a mano."
+scan_cancelled = "Escaneo cancelado por el usuario; no se guardó ninguna foto."

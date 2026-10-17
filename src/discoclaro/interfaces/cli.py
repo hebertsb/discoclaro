@@ -7,6 +7,7 @@ resultado con los textos del catálogo. Aquí no va lógica de negocio.
 import argparse
 import json
 import sys
+import time
 from collections.abc import Sequence
 
 from discoclaro import __version__
@@ -18,14 +19,21 @@ from discoclaro.domain.formatting import (
     format_table,
     safe_text,
 )
-from discoclaro.domain.models import Node
+from discoclaro.domain.models import Node, ScanProgress
 from discoclaro.domain.unexplained import Unexplained
 from discoclaro.i18n import t
+from discoclaro.platform import windows
 from discoclaro.services import elevation_service, report_service, scan_service
 from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
 
 COMMANDS = ("scan", "report", "growth")
+EXIT_CANCELLED = 130
+PROGRESS_INTERVAL_S = 0.15
+
+
+class ScanPaused(Exception):
+    """El usuario pidió pausar (T1.10); ya queda a salvo en el punto de control."""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,6 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
             )
             subparser.add_argument(
                 "--admin", action="store_true", help=t("cli.scan.admin_help")
+            )
+            subparser.add_argument(
+                "--restart", action="store_true", help=t("cli.scan.restart_help")
             )
         elif name == "report":
             subparser.add_argument(
@@ -73,7 +84,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     _make_output_robust()
     if args.command == "scan":
-        return _scan(args.target, args.admin)
+        return _scan(args.target, args.admin, args.restart)
     if args.command == "report":
         return _report(args.target, args.top, args.json)
     return 0
@@ -98,21 +109,78 @@ def _announce_writable_install(directory: str) -> None:
     print(t("admin.writable_warning", directory=safe_text(directory)))
 
 
-def _scan(target: str, admin: bool = False) -> int:
+class _ProgressReporter:
+    """Progreso en una sola línea (solo en una terminal interactiva) y pausa a tecla.
+
+    `on_progress` se pasa al escaneo normal; `on_checkpoint` se llama cada vez que una
+    carpeta de primer nivel queda a salvo en el punto de control (T1.10), que es el
+    único momento seguro para pausar sin perder nada: ahí se revisa si el usuario
+    pulsó la tecla de pausar.
+    """
+
+    def __init__(self) -> None:
+        self._shown = False
+        self._last = 0.0
+
+    def on_progress(self, progress: ScanProgress) -> None:
+        if not sys.stdout.isatty():
+            return
+        now = time.monotonic()
+        if self._shown and now - self._last < PROGRESS_INTERVAL_S:
+            return
+        self._shown = True
+        self._last = now
+        line = t(
+            "scan.progress",
+            folders=_number(progress.folders),
+            files=_number(progress.files),
+            size=_size(progress.bytes_scanned),
+            path=safe_text(progress.current_path),
+        )
+        print(f"\r{line}", end="", flush=True)
+
+    def on_checkpoint(self) -> None:
+        if windows.pause_requested():
+            raise ScanPaused
+
+    def finish(self) -> None:
+        """Pasa a una línea nueva si se llegó a mostrar progreso."""
+        if self._shown:
+            print()
+
+
+def _scan(target: str, admin: bool = False, restart: bool = False) -> int:
     """Escanea `target`, guarda la foto y muestra el resumen."""
+    reporter = _ProgressReporter()
     try:
         if admin:
             summary = elevation_service.run_admin_scan(
                 target,
                 on_elevate=_announce_elevation,
                 on_integrity_warning=_announce_writable_install,
+                restart=restart,
             )
         else:
-            summary = scan_service.run_scan(target)
+            summary = scan_service.run_scan(
+                target,
+                on_progress=reporter.on_progress,
+                on_checkpoint=reporter.on_checkpoint,
+                restart=restart,
+            )
+    except ScanPaused:
+        reporter.finish()
+        print(t("scan.paused", target=safe_text(target)), file=sys.stderr)
+        return EXIT_CANCELLED
+    except KeyboardInterrupt:
+        reporter.finish()
+        print(t("errors.scan_cancelled"), file=sys.stderr)
+        return EXIT_CANCELLED
     except ScanError as error:
+        reporter.finish()
         message = t(f"errors.{error.kind}", target=safe_text(error.target))
         print(message, file=sys.stderr)
         return 1
+    reporter.finish()
     for line in _summary_lines(summary):
         print(line)
     return 0
@@ -154,21 +222,27 @@ def _summary_lines(summary: ScanSummary) -> list[str]:
             duration=format_duration(
                 snapshot.duration_s, t("format.decimal_separator")
             ),
-        ),
+        )
+    ]
+    if summary.resumed_folders:
+        lines.append(t("scan.resumed", count=_number(summary.resumed_folders)))
+    lines.append(
         t(
             "scan.counts",
             folders=_number(summary.folders),
             files=_number(summary.files),
             links=_number(summary.skipped_links),
-        ),
+        )
+    )
+    lines.append(
         t(
             space_key,
             scanned=_size(snapshot.scanned_bytes),
             used=_size(snapshot.used_bytes),
             total=_size(snapshot.total_bytes),
             free=_size(snapshot.free_bytes),
-        ),
-    ]
+        )
+    )
     if snapshot.duplicate_bytes > 0:
         lines.append(t("scan.duplicates", size=_size(snapshot.duplicate_bytes)))
     if snapshot.system_files_bytes > 0:

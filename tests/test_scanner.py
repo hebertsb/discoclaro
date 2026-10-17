@@ -9,7 +9,7 @@ import pytest
 
 from discoclaro.adapters import scanner
 from discoclaro.adapters.scanner import enumerate_with_scandir, scan_tree
-from discoclaro.domain.models import DirectoryEntry, Unreadable
+from discoclaro.domain.models import DirectoryEntry, Node, ResumedSubtree, Unreadable
 from discoclaro.platform import windows_listing
 
 REPARSE_POINT = 0x400
@@ -251,6 +251,90 @@ def test_files_without_an_id_are_never_taken_for_duplicates():
     tree = {"/r": [file("/r/a", 10), file("/r/b", 10), file("/r/c", 10)]}
     result = scan_tree("/r", fake_enumerator(tree))
     assert (result.scanned_bytes, result.duplicate_bytes) == (30, 0)
+
+
+def test_on_progress_fires_once_per_folder_with_running_totals():
+    # "/r" se abre antes de que empiece el bucle principal, así que su archivo
+    # suelto (loose.bin) ya cuenta en el primer aviso, aunque "/r" cierre después.
+    tree = {
+        "/r": [folder("/r/a"), file("/r/loose.bin", 5)],
+        "/r/a": [file("/r/a/x", 10)],
+    }
+    seen = []
+    scan_tree("/r", fake_enumerator(tree), on_progress=seen.append)
+    assert [(p.folders, p.files, p.bytes_scanned, p.current_path) for p in seen] == [
+        (1, 2, 15, "/r/a"),
+        (2, 2, 15, "/r"),
+    ]
+
+
+def test_a_known_top_level_folder_is_not_read_again():
+    tree = {
+        "/r": [folder("/r/a"), folder("/r/b")],
+        "/r/b": [file("/r/b/y", 20)],
+        # "/r/a" no está: si algo intentara leerla, esto lanzaría KeyError.
+    }
+    known_a = ResumedSubtree(nodes=(Node("/r/a", "/r", 10, 1, 1),))
+    result = scan_tree("/r", fake_enumerator(tree), resume={"/r/a": known_a})
+    nodes = by_path(result)
+    assert nodes["/r/a"].size_bytes == 10
+    assert nodes["/r/b"].size_bytes == 20
+    assert nodes["/r"].size_bytes == 30
+    assert result.n_files == 2
+
+
+def test_a_resumed_folder_is_never_enumerated():
+    calls = []
+    tree = {"/r": [folder("/r/a")]}
+
+    def enumerate_directory(path):
+        calls.append(path)
+        return iter(tree[path])
+
+    known_a = ResumedSubtree(nodes=(Node("/r/a", "/r", 10, 1, 1),))
+    scan_tree("/r", enumerate_directory, resume={"/r/a": known_a})
+    assert calls == ["/r"]
+
+
+def test_a_resumed_subtree_keeps_its_descendant_nodes_as_they_were():
+    tree = {"/r": [folder("/r/a"), folder("/r/b")], "/r/b": [file("/r/b/y", 1)]}
+    known_descendant = Node("/r/a/inner", "/r/a", 7, 1, 2)
+    known_root = Node("/r/a", "/r", 7, 1, 1)
+    known_a = ResumedSubtree(nodes=(known_descendant, known_root))
+    result = scan_tree("/r", fake_enumerator(tree), resume={"/r/a": known_a})
+    nodes = by_path(result)
+    assert nodes["/r/a/inner"] == known_descendant
+    assert nodes["/r/a"].size_bytes == 7
+    assert nodes["/r"].size_bytes == 8
+
+
+def test_on_subtree_done_fires_only_for_freshly_scanned_top_level_folders():
+    tree = {
+        "/r": [folder("/r/a"), folder("/r/b")],
+        "/r/b": [file("/r/b/y", 20, ident(1)), file("/r/b/z", 20, ident(1))],
+    }
+    known_a = ResumedSubtree(nodes=(Node("/r/a", "/r", 10, 1, 1),), duplicate_bytes=5)
+    done = []
+    result = scan_tree(
+        "/r",
+        fake_enumerator(tree),
+        resume={"/r/a": known_a},
+        on_subtree_done=lambda path, subtree: done.append((path, subtree)),
+    )
+    assert [path for path, _ in done] == ["/r/b"]
+    [(_, subtree)] = done
+    assert subtree.nodes[-1].path == "/r/b"
+    assert subtree.duplicate_bytes == 20
+    assert result.duplicate_bytes == 25
+
+
+def test_resumed_subtree_counts_carry_into_the_final_totals():
+    tree = {"/r": [folder("/r/a")]}
+    known_a = ResumedSubtree(
+        nodes=(Node("/r/a", "/r", 0, 0, 1),), unreadable_count=3, skipped_links=2
+    )
+    result = scan_tree("/r", fake_enumerator(tree), resume={"/r/a": known_a})
+    assert (result.unreadable_count, result.skipped_links) == (3, 2)
 
 
 def test_different_ids_with_the_same_size_are_not_duplicates():

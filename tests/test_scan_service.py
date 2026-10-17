@@ -7,10 +7,17 @@ from datetime import UTC, datetime
 
 import pytest
 
-from discoclaro.adapters.scanner import scan_tree
+from discoclaro.adapters import scan_checkpoint
+from discoclaro.adapters.scanner import enumerate_with_scandir, scan_tree
 from discoclaro.adapters.store import Store
 from discoclaro.adapters.volumes import list_volumes
-from discoclaro.domain.models import Node, ScanResult, SystemFile, Volume
+from discoclaro.domain.models import (
+    Node,
+    ResumedSubtree,
+    ScanResult,
+    SystemFile,
+    Volume,
+)
 from discoclaro.domain.unexplained import Unexplained
 from discoclaro.platform import windows
 from discoclaro.services import scan_service
@@ -37,9 +44,23 @@ class FakeScanner:
         self.result = result
         self.error = error
         self.calls = []
+        self.progress_calls = []
+        self.resumes = []
+        self.subtree_done_callbacks = []
 
-    def __call__(self, path, skip_root_files=()):
+    def __call__(
+        self,
+        path,
+        skip_root_files=(),
+        on_progress=None,
+        resume=None,
+        on_subtree_done=None,
+    ):
         self.calls.append((path, tuple(skip_root_files)))
+        self.resumes.append(resume)
+        self.subtree_done_callbacks.append(on_subtree_done)
+        if on_progress is not None:
+            self.progress_calls.append(on_progress)
         if self.error:
             raise self.error
         return self.result
@@ -340,12 +361,72 @@ def test_only_the_folders_that_pass_the_rule_are_saved(store):
     }
 
 
+def test_real_resume_does_not_rescan_a_finished_top_level_folder(tmp_path):
+    """De punta a punta con un árbol real y el escáner de verdad, sin fakes."""
+    root = tmp_path / "root"
+    (root / "a").mkdir(parents=True)
+    (root / "a" / "x.bin").write_bytes(b"1" * 100)
+    (root / "b").mkdir()
+    (root / "b" / "y.bin").write_bytes(b"2" * 50)
+
+    checkpoint_path = tmp_path / "checkpoint.json"
+    touched = []
+    should_fail = {"b": True}
+
+    def flaky_enumerator(path):
+        touched.append(path)
+        if path == str(root / "b") and should_fail["b"]:
+            should_fail["b"] = False
+            raise KeyboardInterrupt
+        # El recorrido usa una pila (LIFO): lo último que se lista es lo primero que
+        # se visita. Se ordena al revés para que "a" se mida antes que "b".
+        return sorted(
+            enumerate_with_scandir(path), key=lambda entry: entry.name, reverse=True
+        )
+
+    def flaky_scanner(path, **kwargs):
+        return scan_tree(path, flaky_enumerator, **kwargs)
+
+    def do_scan():
+        with Store.open(tmp_path / "test.db") as store:
+            return scan_target(
+                str(root),
+                store,
+                volumes=fake_volumes,
+                scanner=flaky_scanner,
+                system_files=lambda r: [],
+                is_admin=lambda: False,
+                is_folder=lambda p: True,
+                canonical_path=lambda p: p,
+                now=lambda: T0,
+                monotonic=ticks(0.0, 1.0),
+                checkpoint_path=checkpoint_path,
+            )
+
+    with pytest.raises(KeyboardInterrupt):
+        do_scan()
+    assert str(root / "a") in touched
+    assert str(root / "b") in touched
+
+    touched.clear()
+    summary = do_scan()
+    assert str(root / "a") not in touched
+    assert str(root / "b") in touched
+    assert summary.resumed_folders == 1
+    with Store.open(tmp_path / "test.db") as store:
+        nodes = {node.path: node for node in store.nodes(summary.snapshot.id)}
+    assert nodes[str(root)].size_bytes == 150
+    assert nodes[str(root / "a")].size_bytes == 100
+    assert nodes[str(root / "b")].size_bytes == 50
+    assert not checkpoint_path.exists()
+
+
 def test_run_scan_opens_the_database_in_the_data_folder_and_closes_it(
     tmp_path, monkeypatch
 ):
     seen = {}
 
-    def fake_scan_target(target, store):
+    def fake_scan_target(target, store, **kwargs):
         seen["target"] = target
         seen["store"] = store
         store.snapshots()
@@ -364,9 +445,109 @@ def test_run_scan_uses_the_default_data_folder_when_none_is_given(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(windows, "default_data_dir", lambda: tmp_path / "default")
-    monkeypatch.setattr(scan_service, "scan_target", lambda target, store: "ok")
+    monkeypatch.setattr(scan_service, "scan_target", lambda target, store, **kw: "ok")
     assert scan_service.run_scan("C:") == "ok"
     assert (tmp_path / "default" / "discoclaro.db").exists()
+
+
+class InterruptingScanner:
+    """Avisa una carpeta de primer nivel terminada y después se corta, sin terminar."""
+
+    def __init__(self, subtree_path, subtree):
+        self.subtree_path = subtree_path
+        self.subtree = subtree
+        self.resumes = []
+
+    def __call__(
+        self,
+        path,
+        skip_root_files=(),
+        on_progress=None,
+        resume=None,
+        on_subtree_done=None,
+    ):
+        self.resumes.append(resume)
+        if on_subtree_done is not None:
+            on_subtree_done(self.subtree_path, self.subtree)
+        raise KeyboardInterrupt()
+
+
+def test_an_interruption_leaves_a_checkpoint_that_is_not_lost(tmp_path, store):
+    checkpoint_path = tmp_path / "checkpoint.json"
+    subtree = ResumedSubtree(nodes=(Node("C:\\a", "C:\\", 10, 1, 1),))
+    with pytest.raises(KeyboardInterrupt):
+        run(
+            "C:",
+            store,
+            InterruptingScanner("C:\\a", subtree),
+            checkpoint_path=checkpoint_path,
+        )
+    assert store.snapshots() == []
+    assert scan_checkpoint.read_checkpoint(checkpoint_path, "C:\\") == {
+        "C:\\a": subtree
+    }
+
+
+def test_a_checkpoint_is_read_and_passed_to_the_scanner(tmp_path, store):
+    checkpoint_path = tmp_path / "checkpoint.json"
+    subtree = ResumedSubtree(nodes=(Node("C:\\a", "C:\\", 10, 1, 1),))
+    scan_checkpoint.write_checkpoint(checkpoint_path, "C:\\", {"C:\\a": subtree})
+    scanner = FakeScanner(make_result())
+    summary = run("C:", store, scanner, checkpoint_path=checkpoint_path)
+    assert scanner.resumes == [{"C:\\a": subtree}]
+    assert summary.resumed_folders == 1
+
+
+def test_restart_ignores_an_existing_checkpoint(tmp_path, store):
+    checkpoint_path = tmp_path / "checkpoint.json"
+    subtree = ResumedSubtree(nodes=(Node("C:\\a", "C:\\", 10, 1, 1),))
+    scan_checkpoint.write_checkpoint(checkpoint_path, "C:\\", {"C:\\a": subtree})
+    scanner = FakeScanner(make_result())
+    summary = run("C:", store, scanner, checkpoint_path=checkpoint_path, restart=True)
+    assert scanner.resumes == [{}]
+    assert summary.resumed_folders == 0
+
+
+def test_the_checkpoint_is_cleared_after_a_successful_save(tmp_path, store):
+    checkpoint_path = tmp_path / "checkpoint.json"
+    scan_checkpoint.write_checkpoint(checkpoint_path, "C:\\", {})
+    run("C:", store, FakeScanner(make_result()), checkpoint_path=checkpoint_path)
+    assert not checkpoint_path.exists()
+
+
+def test_without_a_checkpoint_path_nothing_is_read_or_written(store):
+    scanner = FakeScanner(make_result())
+    run("C:", store, scanner)
+    assert scanner.resumes == [{}]
+    assert scanner.subtree_done_callbacks == [None]
+
+
+def test_on_checkpoint_fires_once_per_subtree_done(tmp_path, store):
+    checkpoint_path = tmp_path / "checkpoint.json"
+    subtree = ResumedSubtree(nodes=(Node("C:\\a", "C:\\", 10, 1, 1),))
+
+    class TwoSubtreeScanner:
+        def __call__(
+            self,
+            path,
+            skip_root_files=(),
+            on_progress=None,
+            resume=None,
+            on_subtree_done=None,
+        ):
+            on_subtree_done("C:\\a", subtree)
+            on_subtree_done("C:\\b", subtree)
+            return make_result()
+
+    seen = []
+    run(
+        "C:",
+        store,
+        TwoSubtreeScanner(),
+        checkpoint_path=checkpoint_path,
+        on_checkpoint=lambda: seen.append(1),
+    )
+    assert seen == [1, 1]
 
 
 def test_the_real_adapters_are_the_defaults_without_calling_them():
@@ -378,6 +559,9 @@ def test_the_real_adapters_are_the_defaults_without_calling_them():
     assert parameters["is_folder"].default is os.path.isdir
     assert parameters["canonical_path"].default is os.path.realpath
     assert parameters["keep"].default is keep_node
+    assert parameters["read_checkpoint"].default is scan_checkpoint.read_checkpoint
+    assert parameters["write_checkpoint"].default is scan_checkpoint.write_checkpoint
+    assert parameters["clear_checkpoint"].default is scan_checkpoint.clear_checkpoint
 
 
 def test_scan_error_carries_the_message_key_and_the_target():

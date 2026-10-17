@@ -15,15 +15,29 @@ El tamaño de una carpeta cuenta **todo lo que tiene dentro**, enlaces duros inc
 como el Explorador: así dos fotos son comparables sin depender del orden del recorrido.
 Aparte, `duplicate_bytes` suma lo que ocupan de más los enlaces duros (el mismo
 contenido visto otra vez con otro nombre), para que el total del volumen sea exacto.
+
+**Retomar un punto de control (T1.10):** si `resume` trae una carpeta de primer nivel
+(hija directa de `root`) ya medida de antes, no se vuelve a leer: se usa tal cual. Cada
+vez que una carpeta de primer nivel **nueva** termina de medirse, `on_subtree_done` la
+recibe completa, para que quien llama la guarde. Solo se checkpointea a esa
+profundidad: es poca pérdida si algo se corta (como mucho, una carpeta de primer
+nivel) y no hace falta guardar el recorrido entero a cada paso.
 """
 
 import os
 import stat
 import sys
-from collections.abc import Callable, Collection, Iterable, Iterator
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 
-from discoclaro.domain.models import DirectoryEntry, Node, ScanResult, Unreadable
+from discoclaro.domain.models import (
+    DirectoryEntry,
+    Node,
+    ResumedSubtree,
+    ScanProgress,
+    ScanResult,
+    Unreadable,
+)
 from discoclaro.platform import windows_listing
 
 MAX_RECORDED_UNREADABLE = 1000
@@ -35,6 +49,8 @@ NOT_ON_DISK = stat.FILE_ATTRIBUTE_OFFLINE | RECALL_ON_OPEN | RECALL_ON_DATA_ACCE
 REPARSE_POINT = stat.FILE_ATTRIBUTE_REPARSE_POINT
 
 Enumerator = Callable[[str], Iterable[DirectoryEntry]]
+OnProgress = Callable[[ScanProgress], None]
+OnSubtreeDone = Callable[[str, ResumedSubtree], None]
 
 
 def enumerate_with_scandir(
@@ -100,6 +116,10 @@ class _Tally:
     skipped_links: int = 0
     seen_ids: set[bytes] = field(default_factory=set)
     duplicate_bytes: int = 0
+    # Para el progreso (T1.10): archivos y bytes vistos en total, independiente de
+    # cómo se van sumando las carpetas unas dentro de otras.
+    files_seen: int = 0
+    bytes_seen: int = 0
 
     def record(self, path: str, reason: str) -> None:
         """Cuenta una ruta ilegible y guarda las primeras `MAX_RECORDED_UNREADABLE`."""
@@ -113,6 +133,9 @@ def scan_tree(
     enumerate_directory: Enumerator | None = None,
     *,
     skip_root_files: Collection[str] = (),
+    on_progress: OnProgress | None = None,
+    resume: Mapping[str, ResumedSubtree] | None = None,
+    on_subtree_done: OnSubtreeDone | None = None,
 ) -> ScanResult:
     """Mide `root` y todo lo que cuelga de él.
 
@@ -125,26 +148,70 @@ def scan_tree(
     raíz del recorrido y no suman ni bytes ni archivos. Sirve para los archivos de
     sistema de un volumen, que se miden aparte; un archivo con ese nombre en una
     subcarpeta sí cuenta.
+
+    `on_progress` avisa, cada vez que una carpeta cualquiera termina de medirse,
+    cuánto lleva en total. `resume` y `on_subtree_done` son para retomar un punto de
+    control (T1.10): ver el docstring del módulo.
     """
     list_entries = enumerate_directory or default_enumerator()
     tally = _Tally(skip_root_names=frozenset(name.lower() for name in skip_root_files))
-    stack = [_open(_Frame(root, None, 0), list_entries, tally)]
+    known = resume or {}
+    for reused in known.values():
+        tally.nodes.extend(reused.nodes)
+        tally.duplicate_bytes += reused.duplicate_bytes
+        tally.unreadable_count += reused.unreadable_count
+        tally.skipped_links += reused.skipped_links
+        root_node = reused.nodes[-1]
+        tally.files_seen += root_node.n_files
+        tally.bytes_seen += root_node.size_bytes
+    stack = [_open(_Frame(root, None, 0), list_entries, tally, known)]
+    subtree_start = len(tally.nodes)
+    marks = (0, 0, 0)  # duplicate_bytes, unreadable_count, skipped_links al empezar
     while stack:
         frame = stack[-1]
         if frame.pending:
-            child = _Frame(frame.pending.pop(), frame.path, frame.depth + 1)
-            stack.append(_open(child, list_entries, tally))
+            child_path = frame.pending.pop()
+            child = _Frame(child_path, frame.path, frame.depth + 1)
+            if child.depth == 1:
+                subtree_start = len(tally.nodes)
+                marks = (
+                    tally.duplicate_bytes,
+                    tally.unreadable_count,
+                    tally.skipped_links,
+                )
+            stack.append(_open(child, list_entries, tally, known))
             continue
         stack.pop()
-        tally.nodes.append(
-            Node(
-                path=frame.path,
-                parent_path=frame.parent_path,
-                size_bytes=frame.size_bytes,
-                n_files=frame.n_files,
-                depth=frame.depth,
+        reused = frame.path in known
+        if not reused:
+            tally.nodes.append(
+                Node(
+                    path=frame.path,
+                    parent_path=frame.parent_path,
+                    size_bytes=frame.size_bytes,
+                    n_files=frame.n_files,
+                    depth=frame.depth,
+                )
             )
-        )
+            if on_progress is not None:
+                on_progress(
+                    ScanProgress(
+                        folders=len(tally.nodes),
+                        files=tally.files_seen,
+                        bytes_scanned=tally.bytes_seen,
+                        current_path=frame.path,
+                    )
+                )
+        if frame.depth == 1 and not reused and on_subtree_done is not None:
+            on_subtree_done(
+                frame.path,
+                ResumedSubtree(
+                    nodes=tuple(tally.nodes[subtree_start:]),
+                    duplicate_bytes=tally.duplicate_bytes - marks[0],
+                    unreadable_count=tally.unreadable_count - marks[1],
+                    skipped_links=tally.skipped_links - marks[2],
+                ),
+            )
         if stack:
             stack[-1].size_bytes += frame.size_bytes
             stack[-1].n_files += frame.n_files
@@ -158,8 +225,23 @@ def scan_tree(
     )
 
 
-def _open(frame: _Frame, list_entries: Enumerator, tally: _Tally) -> _Frame:
-    """Lee los elementos de una carpeta y suma sus archivos a `frame`."""
+def _open(
+    frame: _Frame,
+    list_entries: Enumerator,
+    tally: _Tally,
+    known: Mapping[str, ResumedSubtree],
+) -> _Frame:
+    """Lee los elementos de una carpeta y suma sus archivos a `frame`.
+
+    Si `frame.path` ya está en `known` (un punto de control), no se lee: se usa el
+    total que ya se sabía y se deja sin nada pendiente.
+    """
+    reused = known.get(frame.path)
+    if reused is not None:
+        root_node = reused.nodes[-1]
+        frame.size_bytes = root_node.size_bytes
+        frame.n_files = root_node.n_files
+        return frame
     try:
         for entry in list_entries(frame.path):
             _visit(entry, frame, tally)
@@ -184,6 +266,8 @@ def _visit(entry: DirectoryEntry, frame: _Frame, tally: _Tally) -> None:
     if kind == "file":
         frame.n_files += 1
         frame.size_bytes += entry.size_bytes
+        tally.files_seen += 1
+        tally.bytes_seen += entry.size_bytes
         if entry.file_id is not None:
             if entry.file_id in tally.seen_ids:
                 tally.duplicate_bytes += entry.size_bytes

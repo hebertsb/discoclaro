@@ -13,7 +13,7 @@ import pytest
 
 from discoclaro import __version__, i18n
 from discoclaro.domain.formatting import format_table
-from discoclaro.domain.models import Node, Snapshot, SystemFile
+from discoclaro.domain.models import Node, ScanProgress, Snapshot, SystemFile
 from discoclaro.domain.unexplained import compute_unexplained
 from discoclaro.i18n import t
 from discoclaro.interfaces import cli
@@ -64,7 +64,7 @@ def fake_run_scan(monkeypatch, summary=None, error=None):
     """Reemplaza el servicio de escaneo; devuelve la lista de destinos recibidos."""
     calls = []
 
-    def run_scan(target):
+    def run_scan(target, **kwargs):
         calls.append(target)
         if error:
             raise error
@@ -279,6 +279,155 @@ def test_a_folder_summary_uses_the_folder_wording_and_omits_empty_lines(
     ]
 
 
+def test_resumed_folders_line_appears_right_after_the_done_line(monkeypatch, capsys):
+    fake_run_scan(monkeypatch, dataclasses.replace(make_summary(), resumed_folders=3))
+    assert main(["scan", "C:"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "Escaneo de C: terminado en 3 min 12 s."
+    assert lines[1] == "Se retomaron 3 carpetas de primer nivel de una pausa anterior."
+    assert lines[2].startswith("Carpetas:")
+
+
+def test_no_resumed_folders_line_when_nothing_was_resumed(monkeypatch, capsys):
+    fake_run_scan(monkeypatch, make_summary())
+    assert main(["scan", "C:"]) == 0
+    assert "retomaron" not in capsys.readouterr().out
+
+
+def test_scan_help_mentions_the_restart_option(capsys):
+    with pytest.raises(SystemExit):
+        main(["scan", "--help"])
+    shown = " ".join(capsys.readouterr().out.split())
+    assert "--restart" in shown
+    assert t("cli.scan.restart_help") in shown
+
+
+def test_restart_is_passed_through_to_the_normal_scan(monkeypatch, capsys):
+    calls = []
+
+    def run_scan(target, **kwargs):
+        calls.append(kwargs.get("restart"))
+        return make_summary()
+
+    monkeypatch.setattr(cli.scan_service, "run_scan", run_scan)
+    assert main(["scan", "C:", "--restart"]) == 0
+    assert calls == [True]
+    capsys.readouterr()
+
+
+def test_without_the_flag_restart_defaults_to_false(monkeypatch, capsys):
+    calls = []
+
+    def run_scan(target, **kwargs):
+        calls.append(kwargs.get("restart"))
+        return make_summary()
+
+    monkeypatch.setattr(cli.scan_service, "run_scan", run_scan)
+    assert main(["scan", "C:"]) == 0
+    assert calls == [False]
+    capsys.readouterr()
+
+
+def test_restart_is_passed_through_to_the_admin_scan(monkeypatch, capsys):
+    calls = []
+
+    def run_admin_scan(target, *, on_elevate=None, on_integrity_warning=None, **kw):
+        calls.append(kw.get("restart"))
+        return make_summary()
+
+    monkeypatch.setattr(cli.elevation_service, "run_admin_scan", run_admin_scan)
+    assert main(["scan", "C:", "--admin", "--restart"]) == 0
+    assert calls == [True]
+    capsys.readouterr()
+
+
+def test_a_keyboard_interrupt_prints_a_clean_message_and_exits_130(monkeypatch, capsys):
+    fake_run_scan(monkeypatch, error=KeyboardInterrupt())
+    assert main(["scan", "C:"]) == 130
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        captured.err == "Escaneo cancelado por el usuario; no se guardó ninguna foto.\n"
+    )
+
+
+def test_the_keyboard_interrupt_message_is_translated(monkeypatch, capsys):
+    i18n.set_language("en")
+    fake_run_scan(monkeypatch, error=KeyboardInterrupt())
+    assert main(["scan", "C:"]) == 130
+    assert capsys.readouterr().err == (
+        "Scan cancelled by the user; no snapshot was saved.\n"
+    )
+
+
+def test_pausing_prints_the_resume_command_and_exits_130(monkeypatch, capsys):
+    def run_scan(target, *, on_progress=None, on_checkpoint=None, restart=False):
+        raise cli.ScanPaused
+
+    monkeypatch.setattr(cli.scan_service, "run_scan", run_scan)
+    assert main(["scan", "D:\\datos"]) == 130
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "Escaneo pausado. Corré `discoclaro scan D:\\datos` para seguir donde se "
+        "quedó.\n"
+    )
+
+
+def test_progress_reporter_only_prints_when_stdout_is_a_tty(monkeypatch, capsys):
+    reporter = cli._ProgressReporter()
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: False)
+    reporter.on_progress(ScanProgress(1, 1, 1, "C:\\x"))
+    assert capsys.readouterr().out == ""
+
+
+def test_progress_reporter_prints_a_line_when_interactive(monkeypatch, capsys):
+    reporter = cli._ProgressReporter()
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    reporter.on_progress(ScanProgress(312, 1000, 5 * GIB, "C:\\Windows"))
+    out = capsys.readouterr().out
+    assert out.startswith("\r")
+    assert "312" in out
+    assert "C:\\Windows" in out
+
+
+def test_progress_reporter_throttles_by_time(monkeypatch, capsys):
+    reporter = cli._ProgressReporter()
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    times = iter([0.0, 0.05, 0.2])
+    monkeypatch.setattr(cli.time, "monotonic", lambda: next(times))
+    reporter.on_progress(ScanProgress(1, 1, 1, "a"))
+    reporter.on_progress(ScanProgress(2, 2, 2, "b"))
+    reporter.on_progress(ScanProgress(3, 3, 3, "c"))
+    assert capsys.readouterr().out.count("\r") == 2
+
+
+def test_progress_reporter_finish_prints_a_newline_only_if_something_was_shown(
+    monkeypatch, capsys
+):
+    reporter = cli._ProgressReporter()
+    reporter.finish()
+    assert capsys.readouterr().out == ""
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    reporter.on_progress(ScanProgress(1, 1, 1, "a"))
+    capsys.readouterr()
+    reporter.finish()
+    assert capsys.readouterr().out == "\n"
+
+
+def test_on_checkpoint_raises_scan_paused_when_the_pause_key_was_pressed(monkeypatch):
+    reporter = cli._ProgressReporter()
+    monkeypatch.setattr(cli.windows, "pause_requested", lambda: True)
+    with pytest.raises(cli.ScanPaused):
+        reporter.on_checkpoint()
+
+
+def test_on_checkpoint_does_nothing_without_the_pause_key(monkeypatch):
+    reporter = cli._ProgressReporter()
+    monkeypatch.setattr(cli.windows, "pause_requested", lambda: False)
+    reporter.on_checkpoint()
+
+
 @pytest.mark.parametrize(
     ("kind", "expected"),
     [
@@ -309,7 +458,7 @@ def fake_admin_scan(
     """Reemplaza el servicio de administrador; devuelve los destinos recibidos."""
     calls = []
 
-    def run_admin_scan(target, *, on_elevate=None, on_integrity_warning=None):
+    def run_admin_scan(target, *, on_elevate=None, on_integrity_warning=None, **kwargs):
         calls.append(target)
         if on_integrity_warning and warning:
             on_integrity_warning(warning)

@@ -6,6 +6,7 @@ módulo, para poder agregar Linux y macOS sin tocar el núcleo.
 
 import ctypes
 import logging
+import msvcrt
 import ntpath
 import os
 import stat
@@ -22,6 +23,9 @@ DRIVE_FIXED = 3  # valor de GetDriveTypeW para un disco fijo
 
 # Archivos de sistema grandes que cuelgan de la raíz de un volumen.
 SYSTEM_FILE_NAMES = ("pagefile.sys", "hiberfil.sys", "swapfile.sys")
+
+# Tecla para pausar un escaneo a propósito (T1.10), sin distinguir mayúsculas.
+PAUSE_KEY = b"p"
 
 APP_FOLDER = "discoclaro"
 
@@ -244,3 +248,21 @@ def ensure_safe_to_write(
         raise UnsafeDataLocation(f"this is a link or a junction: {path!r}")
     if info.st_nlink > 1:
         raise UnsafeDataLocation(f"this has more than one name: {path!r}")
+
+
+def pause_requested(
+    kbhit: Callable[[], bool] = msvcrt.kbhit,
+    getch: Callable[[], bytes] = msvcrt.getch,
+) -> bool:
+    """Si se pulsó la tecla de pausar (T1.10) desde la última vez que se miró.
+
+    Lee y descarta todo lo que haya esperando en el teclado: nunca bloquea, y una
+    tecla que no es la de pausar se pierde, como cualquier tecla que se aprieta sin
+    que el programa la lea en ese momento. `kbhit` y `getch` se pueden inyectar para
+    probar sin un teclado real.
+    """
+    pressed = False
+    while kbhit():
+        if getch().lower() == PAUSE_KEY:
+            pressed = True
+    return pressed

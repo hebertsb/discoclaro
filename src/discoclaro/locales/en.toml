@@ -13,6 +13,7 @@ growth = "Compares two snapshots and shows what grew (not implemented yet)."
 target_name = "TARGET"
 target_help = "Disk (for example C:) or folder to scan."
 admin_help = "Scan with administrator permissions; Windows will ask for permission. Whole disks only, like C:."
+restart_help = "Ignores an earlier checkpoint and starts the scan from zero."
 
 [cli.report]
 target_name = "TARGET"
@@ -26,6 +27,9 @@ thousands_separator = ","
 
 [scan]
 done = "Scan of {target} finished in {duration}."
+progress = "Scanning… {folders} folders · {files} files · {size} · {path}"
+resumed = "Resumed {count} top-level folders from an earlier pause."
+paused = "Scan paused. Run `discoclaro scan {target}` to continue where it left off."
 counts = "Folders: {folders} · Files: {files} · Links skipped: {links}"
 space_volume = "Scanned: {scanned} of {used} used (volume of {total}, {free} free)."
 space_folder = "Scanned: {scanned} (the volume uses {used} of {total} and has {free} free)."
@@ -64,3 +68,4 @@ report_no_snapshots = "There is no snapshot saved yet. Run `discoclaro scan <dis
 report_no_snapshot_for_target = "There is no snapshot saved of {target}. Run `discoclaro scan {target}` first."
 integrity_failed = "The administrator permission was not requested: what is installed does not match what is expected ({target}). Reinstall discoclaro and try again."
 unsafe_data_location = "Nothing was written: {target} is a link or has more than one name, so it is not safe to write there. Check it by hand."
+scan_cancelled = "Scan cancelled by the user; no snapshot was saved."

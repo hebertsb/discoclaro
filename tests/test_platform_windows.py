@@ -412,3 +412,35 @@ def test_a_real_hard_link_is_refused(tmp_path):
         windows.ensure_safe_to_write(original)
     with pytest.raises(windows.UnsafeDataLocation):
         windows.ensure_safe_to_write(second_name)
+
+
+def fake_keyboard(*keys):
+    """Un teclado falso: `keys` son los bytes que entrega cada `getch()`."""
+    pending = list(keys)
+    return lambda: bool(pending), lambda: pending.pop(0)
+
+
+def test_pause_requested_is_false_with_nothing_waiting():
+    kbhit, getch = fake_keyboard()
+    assert windows.pause_requested(kbhit, getch) is False
+
+
+def test_pause_requested_is_true_when_the_pause_key_was_pressed():
+    kbhit, getch = fake_keyboard(b"p")
+    assert windows.pause_requested(kbhit, getch) is True
+
+
+def test_pause_requested_ignores_the_case_of_the_key():
+    kbhit, getch = fake_keyboard(b"P")
+    assert windows.pause_requested(kbhit, getch) is True
+
+
+def test_pause_requested_drains_every_waiting_key_without_blocking():
+    kbhit, getch = fake_keyboard(b"x", b"y", b"p", b"z")
+    assert windows.pause_requested(kbhit, getch) is True
+    assert windows.pause_requested(kbhit, getch) is False
+
+
+def test_pause_requested_ignores_a_different_key():
+    kbhit, getch = fake_keyboard(b"x")
+    assert windows.pause_requested(kbhit, getch) is False

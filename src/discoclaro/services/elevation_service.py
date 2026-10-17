@@ -22,7 +22,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from discoclaro.adapters import package_integrity
+from discoclaro.adapters import package_integrity, scan_checkpoint
 from discoclaro.adapters.package_integrity import IntegrityCheck
 from discoclaro.adapters.store import Store, StoreError
 from discoclaro.adapters.volumes import list_volumes
@@ -149,6 +149,7 @@ def run_admin_scan(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     check_integrity: Callable[[], IntegrityCheck] = _check_installed_integrity,
     writable: Callable[[Path], bool] = package_integrity.is_writable_by_the_user,
+    restart: bool = False,
 ) -> ScanSummary:
     """Escanea un volumen completo con permisos de administrador.
 
@@ -160,11 +161,14 @@ def run_admin_scan(
     de desarrollo) no tiene con qué comparar sus archivos fuente y no se bloquea por
     eso, pero si además la carpeta del paquete se puede escribir, `on_integrity_warning`
     recibe esa carpeta antes de pedir el permiso. `on_elevate` recibe el volumen y la
-    orden exacta, ya con sus comillas, justo antes de pedir el permiso.
+    orden exacta, ya con sus comillas, justo antes de pedir el permiso. `restart`
+    descarta un punto de control anterior (T1.10): el proceso elevado usa la misma
+    carpeta de datos, así que basta con borrarlo aquí antes de lanzarlo; el protocolo
+    fijo con el proceso elevado no cambia.
     """
     volume = _volume_of(target, volumes())
     if is_admin():
-        return scan_service.run_scan(volume.name, data_dir)
+        return scan_service.run_scan(volume.name, data_dir, restart=restart)
 
     check = check_integrity()
     if not check.ok:
@@ -180,6 +184,10 @@ def run_admin_scan(
         directory = windows.default_data_dir() if data_dir is None else data_dir
         directory.mkdir(parents=True, exist_ok=True)
         _forget_result(directory)
+        if restart:
+            scan_checkpoint.clear_checkpoint(
+                directory / scan_checkpoint.CHECKPOINT_NAME
+            )
     except OSError as error:
         raise ScanError("cannot_open_database", str(error)) from error
 

@@ -123,6 +123,48 @@ class ScanResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ScanProgress:
+    """Un aviso de cuánto lleva recorrido el escaneo, mientras sigue en curso.
+
+    Los conteos son del total acumulado en esta misma corrida (no cuentan lo que ya
+    venía de un punto de control retomado). `current_path` es la última carpeta que
+    terminó de medirse.
+    """
+
+    folders: int
+    files: int
+    bytes_scanned: int
+    current_path: str
+
+    def __post_init__(self) -> None:
+        if min(self.folders, self.files, self.bytes_scanned) < 0:
+            raise ValueError("scan progress counts cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class ResumedSubtree:
+    """Lo que ya se sabía de una carpeta de primer nivel, de un punto de control.
+
+    `nodes` son esa carpeta y todas sus subcarpetas, en orden posterior (T1.10): no
+    hace falta volver a leerla. `duplicate_bytes`, `unreadable_count` y
+    `skipped_links` son lo que esa carpeta aportó al total del escaneo completo; se
+    suman aparte al retomar porque no están dentro de `nodes`.
+    """
+
+    nodes: tuple[Node, ...]
+    duplicate_bytes: int = 0
+    unreadable_count: int = 0
+    skipped_links: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.nodes:
+            raise ValueError("a resumed subtree needs at least its own node")
+        numbers = (self.duplicate_bytes, self.unreadable_count, self.skipped_links)
+        if min(numbers) < 0:
+            raise ValueError("resumed subtree counts cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
 class SystemFile:
     """Un archivo de sistema grande (como `pagefile.sys`) medido aparte."""
 
