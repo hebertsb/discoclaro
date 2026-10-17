@@ -9,7 +9,9 @@ import logging
 import ntpath
 import os
 import stat
-from collections.abc import Callable, Iterable, Mapping
+import subprocess
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from ctypes import wintypes
 from pathlib import Path
 
 from discoclaro.domain.models import SystemFile
@@ -22,6 +24,38 @@ DRIVE_FIXED = 3  # valor de GetDriveTypeW para un disco fijo
 SYSTEM_FILE_NAMES = ("pagefile.sys", "hiberfil.sys", "swapfile.sys")
 
 APP_FOLDER = "discoclaro"
+
+SEE_MASK_NOCLOSEPROCESS = 0x00000040
+SW_HIDE = 0
+ERROR_CANCELLED = 1223  # el usuario rechazó la ventana de permisos (UAC)
+WAIT_TIMEOUT = 0x00000102
+MAX_WAIT_MS = 0xFFFFFFFE
+
+
+class ElevationDeclined(OSError):
+    """El usuario rechazó la ventana de permisos de Windows (UAC)."""
+
+
+class _ShellExecuteInfo(ctypes.Structure):
+    """`SHELLEXECUTEINFOW`, la estructura de `ShellExecuteExW`."""
+
+    _fields_ = (
+        ("cbSize", wintypes.DWORD),
+        ("fMask", ctypes.c_ulong),
+        ("hwnd", wintypes.HWND),
+        ("lpVerb", wintypes.LPCWSTR),
+        ("lpFile", wintypes.LPCWSTR),
+        ("lpParameters", wintypes.LPCWSTR),
+        ("lpDirectory", wintypes.LPCWSTR),
+        ("nShow", ctypes.c_int),
+        ("hInstApp", wintypes.HINSTANCE),
+        ("lpIDList", ctypes.c_void_p),
+        ("lpClass", wintypes.LPCWSTR),
+        ("hkeyClass", wintypes.HKEY),
+        ("dwHotKey", wintypes.DWORD),
+        ("hIconOrMonitor", wintypes.HANDLE),
+        ("hProcess", wintypes.HANDLE),
+    )
 
 
 def fixed_drive_roots(
@@ -92,6 +126,81 @@ def is_admin(is_user_an_admin: Callable[[], int] | None = None) -> bool:
         return bool((is_user_an_admin or _shell32_is_user_an_admin)())
     except (OSError, AttributeError):
         return False
+
+
+def command_line(parts: Sequence[str]) -> str:
+    """La línea de comandos de Windows para esas partes, con sus comillas.
+
+    Es la misma regla con la que se arma la orden que recibe Windows, así que sirve
+    para mostrársela al usuario tal cual.
+    """
+    return subprocess.list2cmdline(list(parts))
+
+
+def run_elevated(
+    executable: str,
+    arguments: Sequence[str],
+    directory: str,
+    timeout_s: float,
+    *,
+    apis: tuple[object, object] | None = None,
+    last_error: Callable[[], int] | None = None,
+) -> int:
+    """Ejecuta un programa con permisos de administrador y espera su código de salida.
+
+    Windows muestra su ventana de permisos (UAC); discoclaro nunca ve ni guarda una
+    contraseña. El proceso corre sin ventana. `executable` y `directory` deben ser rutas
+    absolutas: el proceso elevado no arranca en la carpeta actual. Lanza
+    `ElevationDeclined` si el usuario rechaza el permiso, `TimeoutError` si pasa
+    `timeout_s` sin que termine (no se puede cerrar desde un proceso sin permisos) y
+    `OSError` si no se pudo lanzar. `apis` y `last_error` se inyectan para probar.
+    """
+    shell32, kernel32 = apis or _load_elevation_apis()
+    get_last_error = last_error or ctypes.get_last_error
+    info = _ShellExecuteInfo()
+    info.cbSize = ctypes.sizeof(info)
+    info.fMask = SEE_MASK_NOCLOSEPROCESS
+    info.lpVerb = "runas"
+    info.lpFile = executable
+    info.lpParameters = subprocess.list2cmdline(list(arguments))
+    info.lpDirectory = directory
+    info.nShow = SW_HIDE
+    if not shell32.ShellExecuteExW(ctypes.pointer(info)):
+        code = get_last_error()
+        if code == ERROR_CANCELLED:
+            raise ElevationDeclined(code, "the permission prompt was declined")
+        raise OSError(code, "the elevated process could not be started")
+    handle = info.hProcess
+    if not handle:
+        raise OSError("the elevated process did not return a handle")
+    try:
+        wait_ms = min(int(timeout_s * 1000), MAX_WAIT_MS)
+        if kernel32.WaitForSingleObject(handle, wait_ms) == WAIT_TIMEOUT:
+            raise TimeoutError("the elevated process took too long")
+        exit_code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.pointer(exit_code)):
+            raise OSError(get_last_error(), "the exit code could not be read")
+        return exit_code.value
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _load_elevation_apis() -> tuple[object, object]:
+    """`shell32` y `kernel32` con los tipos de las funciones que se usan."""
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(_ShellExecuteInfo)]
+    shell32.ShellExecuteExW.restype = wintypes.BOOL
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.GetExitCodeProcess.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    return shell32, kernel32
 
 
 def _kernel32_drive_type() -> Callable[[str], int]:

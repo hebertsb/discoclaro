@@ -18,7 +18,7 @@ from discoclaro.domain.formatting import (
 )
 from discoclaro.domain.unexplained import Unexplained
 from discoclaro.i18n import t
-from discoclaro.services import scan_service
+from discoclaro.services import elevation_service, scan_service
 from discoclaro.services.scan_service import ScanError, ScanSummary
 
 COMMANDS = ("scan", "report", "growth")
@@ -41,6 +41,9 @@ def build_parser() -> argparse.ArgumentParser:
                 metavar=t("cli.scan.target_name"),
                 help=t("cli.scan.target_help"),
             )
+            subparser.add_argument(
+                "--admin", action="store_true", help=t("cli.scan.admin_help")
+            )
     return parser
 
 
@@ -49,7 +52,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     _make_output_robust()
     if args.command == "scan":
-        return _scan(args.target)
+        return _scan(args.target, args.admin)
     return 0
 
 
@@ -61,10 +64,21 @@ def _make_output_robust() -> None:
             reconfigure(errors="replace")
 
 
-def _scan(target: str) -> int:
+def _announce_elevation(volume: str, command: str) -> None:
+    """Dice qué se va a pedir y la orden exacta, antes de la ventana de Windows."""
+    print(t("admin.announce", target=safe_text(volume)))
+    print(t("admin.command", command=safe_text(command)))
+
+
+def _scan(target: str, admin: bool = False) -> int:
     """Escanea `target`, guarda la foto y muestra el resumen."""
     try:
-        summary = scan_service.run_scan(target)
+        if admin:
+            summary = elevation_service.run_admin_scan(
+                target, on_elevate=_announce_elevation
+            )
+        else:
+            summary = scan_service.run_scan(target)
     except ScanError as error:
         message = t(f"errors.{error.kind}", target=safe_text(error.target))
         print(message, file=sys.stderr)
@@ -109,17 +123,21 @@ def _summary_lines(summary: ScanSummary) -> list[str]:
             free=_size(snapshot.free_bytes),
         ),
     ]
-    if summary.system_files:
+    if snapshot.system_files_bytes > 0:
         lines.append(t("scan.system_files", size=_size(snapshot.system_files_bytes)))
     if snapshot.unreadable_count:
         lines.append(t("scan.unreadable", count=_number(snapshot.unreadable_count)))
     if summary.unexplained is not None:
-        lines.extend(_unexplained_lines(summary.unexplained, snapshot.is_admin))
+        lines.extend(
+            _unexplained_lines(summary.unexplained, snapshot.is_admin, snapshot.volume)
+        )
     lines.append(t("scan.saved", id=snapshot.id, nodes=_number(summary.nodes_saved)))
     return lines
 
 
-def _unexplained_lines(unexplained: Unexplained, is_admin: bool) -> list[str]:
+def _unexplained_lines(
+    unexplained: Unexplained, is_admin: bool, volume: str
+) -> list[str]:
     """El espacio sin explicar y, si pasa el umbral, el aviso que corresponde.
 
     No se muestra nada si no sobra espacio: un resultado negativo no es un problema.
@@ -133,5 +151,5 @@ def _unexplained_lines(unexplained: Unexplained, is_admin: bool) -> list[str]:
         key = (
             "scan.unexplained_warning_admin" if is_admin else "scan.unexplained_warning"
         )
-        lines.append(t(key, size=size))
+        lines.append(t(key, size=size, volume=safe_text(volume)))
     return lines

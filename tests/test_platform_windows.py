@@ -1,9 +1,11 @@
 """Pruebas de lo específico de Windows, con discos simulados (nunca reales)."""
 
+import ctypes
 import inspect
 import logging
 import os
 import stat
+import sys
 import types
 from pathlib import Path
 
@@ -190,3 +192,149 @@ def test_is_admin_assumes_no_when_it_cannot_tell(error):
         raise error
 
     assert windows.is_admin(broken) is False
+
+
+class FakeShell32:
+    """`shell32` falso que anota con qué se lo llamó."""
+
+    def __init__(self, succeeds=True, process_handle=123):
+        self.succeeds = succeeds
+        self.process_handle = process_handle
+        self.calls = []
+
+    def ShellExecuteExW(self, pointer):  # noqa: N802 - el nombre lo fija Windows
+        info = pointer.contents
+        self.calls.append(
+            {
+                "size": info.cbSize,
+                "mask": info.fMask,
+                "verb": info.lpVerb,
+                "file": info.lpFile,
+                "parameters": info.lpParameters,
+                "directory": info.lpDirectory,
+                "show": info.nShow,
+            }
+        )
+        info.hProcess = self.process_handle
+        return 1 if self.succeeds else 0
+
+
+class FakeKernel32:
+    """`kernel32` falso: espera, código de salida y cierre del manejador."""
+
+    def __init__(self, wait_result=0, exit_code=0, exit_code_ok=True):
+        self.wait_result = wait_result
+        self.exit_code = exit_code
+        self.exit_code_ok = exit_code_ok
+        self.waited = []
+        self.closed = []
+
+    def WaitForSingleObject(self, handle, milliseconds):  # noqa: N802
+        self.waited.append((handle, milliseconds))
+        return self.wait_result
+
+    def GetExitCodeProcess(self, handle, pointer):  # noqa: N802
+        pointer.contents.value = self.exit_code
+        return 1 if self.exit_code_ok else 0
+
+    def CloseHandle(self, handle):  # noqa: N802
+        self.closed.append(handle)
+        return 1
+
+
+def elevate(shell32=None, kernel32=None, timeout_s=60, last_error=lambda: 0, **extra):
+    shell32 = shell32 or FakeShell32()
+    kernel32 = kernel32 or FakeKernel32()
+    arguments = extra.pop("arguments", ["-I", "-m", "paquete.entrada", "scan", "C:"])
+    return windows.run_elevated(
+        "R:\\python\\python.exe",
+        arguments,
+        "R:\\python",
+        timeout_s,
+        apis=(shell32, kernel32),
+        last_error=last_error,
+    )
+
+
+def test_the_permission_prompt_is_requested_for_exactly_the_given_program():
+    shell32 = FakeShell32()
+    elevate(shell32)
+    (call,) = shell32.calls
+    assert call["verb"] == "runas"
+    assert call["file"] == "R:\\python\\python.exe"
+    assert call["parameters"] == "-I -m paquete.entrada scan C:"
+    assert call["directory"] == "R:\\python"
+    assert call["show"] == windows.SW_HIDE
+    assert call["mask"] & windows.SEE_MASK_NOCLOSEPROCESS
+    assert call["size"] == ctypes.sizeof(windows._ShellExecuteInfo)
+
+
+def test_arguments_with_spaces_are_quoted_not_split():
+    shell32 = FakeShell32()
+    elevate(shell32, arguments=["-m", "mod", "dos palabras"])
+    assert shell32.calls[0]["parameters"] == '-m mod "dos palabras"'
+
+
+def test_the_command_line_shown_is_the_one_windows_receives():
+    parts = ["R:\\Mi python\\python.exe", "-m", "dos palabras", "C:"]
+    assert windows.command_line(parts) == (
+        '"R:\\Mi python\\python.exe" -m "dos palabras" C:'
+    )
+    assert windows.command_line(["a.exe", "scan", "C:"]) == "a.exe scan C:"
+
+
+def test_the_exit_code_is_returned_and_the_handle_is_closed():
+    kernel32 = FakeKernel32(exit_code=3)
+    assert elevate(kernel32=kernel32, timeout_s=2.5) == 3
+    assert kernel32.waited == [(123, 2500)]
+    assert kernel32.closed == [123]
+
+
+def test_a_declined_permission_prompt_is_its_own_error_and_nothing_is_waited_for():
+    kernel32 = FakeKernel32()
+    with pytest.raises(windows.ElevationDeclined) as error:
+        elevate(FakeShell32(succeeds=False), kernel32, last_error=lambda: 1223)
+    assert error.value.errno == 1223
+    assert kernel32.waited == []
+    assert kernel32.closed == []
+
+
+def test_any_other_launch_failure_is_a_plain_os_error():
+    with pytest.raises(OSError) as error:
+        elevate(FakeShell32(succeeds=False), last_error=lambda: 5)
+    assert not isinstance(error.value, windows.ElevationDeclined)
+    assert error.value.errno == 5
+
+
+def test_a_missing_process_handle_is_an_error():
+    with pytest.raises(OSError):
+        elevate(FakeShell32(process_handle=None))
+
+
+def test_taking_too_long_raises_a_timeout_and_still_closes_the_handle():
+    kernel32 = FakeKernel32(wait_result=windows.WAIT_TIMEOUT)
+    with pytest.raises(TimeoutError):
+        elevate(kernel32=kernel32)
+    assert kernel32.closed == [123]
+
+
+def test_not_being_able_to_read_the_exit_code_is_an_error_and_closes_the_handle():
+    kernel32 = FakeKernel32(exit_code_ok=False)
+    with pytest.raises(OSError):
+        elevate(kernel32=kernel32, last_error=lambda: 6)
+    assert kernel32.closed == [123]
+
+
+def test_an_enormous_timeout_is_capped_to_what_windows_accepts():
+    kernel32 = FakeKernel32()
+    elevate(kernel32=kernel32, timeout_s=10**9)
+    assert kernel32.waited[0][1] == windows.MAX_WAIT_MS
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="el tamaño es el de Windows")
+def test_the_structure_has_the_documented_size_and_the_real_apis_load():
+    expected = 112 if ctypes.sizeof(ctypes.c_void_p) == 8 else 60
+    assert ctypes.sizeof(windows._ShellExecuteInfo) == expected
+    shell32, kernel32 = windows._load_elevation_apis()
+    assert shell32.ShellExecuteExW.argtypes
+    assert kernel32.WaitForSingleObject.restype is not None

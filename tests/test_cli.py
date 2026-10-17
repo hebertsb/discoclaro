@@ -155,7 +155,7 @@ def big_unexplained():
     return compute_unexplained(300 * GIB, 250 * GIB, int(6.5 * GIB))
 
 
-def test_a_big_unexplained_space_adds_the_warning_to_open_an_administrator_terminal(
+def test_a_big_unexplained_space_adds_the_warning_that_suggests_admin(
     monkeypatch, capsys
 ):
     fake_run_scan(monkeypatch, make_summary(unexplained=big_unexplained()))
@@ -163,8 +163,7 @@ def test_a_big_unexplained_space_adds_the_warning_to_open_an_administrator_termi
     assert capsys.readouterr().out.splitlines()[-3:] == [
         "Sin explicar: 43,5 GiB (14,5 % de lo usado).",
         "Atención: no se pudo explicar 43,5 GiB. Puede haber carpetas que solo un "
-        "administrador puede abrir: abre una terminal como administrador y vuelve "
-        "a escanear.",
+        "administrador puede abrir: prueba con `discoclaro scan C: --admin`.",
         "Foto guardada: n.º 7 (4.321 carpetas guardadas).",
     ]
 
@@ -176,7 +175,7 @@ def test_the_warning_is_translated(monkeypatch, capsys):
     assert capsys.readouterr().out.splitlines()[-3:-1] == [
         "Unexplained: 43.5 GiB (14.5% of used).",
         "Warning: 43.5 GiB could not be explained. Some folders may only be readable "
-        "by an administrator: open a terminal as administrator and scan again.",
+        "by an administrator: try `discoclaro scan C: --admin`.",
     ]
 
 
@@ -218,6 +217,7 @@ def test_a_folder_summary_uses_the_folder_wording_and_omits_empty_lines(
             "volume": "D:\\data",
             "unreadable_count": 0,
             "scanned_bytes": 10 * GIB,
+            "system_files_bytes": 0,
         }
     )
     summary = make_summary(
@@ -258,6 +258,118 @@ def test_errors_go_to_stderr_with_a_safe_target_and_exit_code_1(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == expected + "D:\\x?[31m?falso\n"
+
+
+COMMAND = "R:\\python\\python.exe -I -m discoclaro.interfaces.elevated scan C:"
+
+
+def fake_admin_scan(monkeypatch, summary=None, error=None, announce=(("C:", COMMAND))):
+    """Reemplaza el servicio de administrador; devuelve los destinos recibidos."""
+    calls = []
+
+    def run_admin_scan(target, *, on_elevate=None):
+        calls.append(target)
+        if on_elevate and announce:
+            on_elevate(*announce)
+        if error:
+            raise error
+        return summary
+
+    monkeypatch.setattr(cli.elevation_service, "run_admin_scan", run_admin_scan)
+    return calls
+
+
+def test_scan_help_mentions_the_admin_option(capsys):
+    with pytest.raises(SystemExit):
+        main(["scan", "--help"])
+    shown = " ".join(capsys.readouterr().out.split())
+    assert "--admin" in shown
+    assert t("cli.scan.admin_help") in shown
+
+
+def test_admin_uses_the_administrator_service_and_not_the_normal_one(
+    monkeypatch, capsys
+):
+    normal = fake_run_scan(monkeypatch, make_summary())
+    admin = fake_admin_scan(monkeypatch, make_summary(system_files=()))
+    assert main(["scan", "c:", "--admin"]) == 0
+    assert admin == ["c:"]
+    assert normal == []
+    assert "Archivos de sistema, medidos aparte: 6,5 GiB" in capsys.readouterr().out
+
+
+def test_without_admin_the_administrator_service_is_never_used(monkeypatch, capsys):
+    normal = fake_run_scan(monkeypatch, make_summary())
+    admin = fake_admin_scan(monkeypatch, make_summary())
+    assert main(["scan", "C:"]) == 0
+    assert normal == ["C:"]
+    assert admin == []
+    capsys.readouterr()
+
+
+def test_the_exact_command_is_shown_before_the_summary(monkeypatch, capsys):
+    fake_admin_scan(monkeypatch, make_summary())
+    assert main(["scan", "C:", "--admin"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == (
+        "Se pedirá permiso de administrador para escanear C: en modo solo lectura. "
+        "Windows mostrará su propia ventana de permisos."
+    )
+    assert lines[1] == f"Orden que recibirá Windows: {COMMAND}"
+    assert lines[2].startswith("Escaneo de C: terminado")
+
+
+def test_the_announcement_is_translated_and_cleaned(monkeypatch, capsys):
+    i18n.set_language("en")
+    fake_admin_scan(
+        monkeypatch, make_summary(), announce=("C:", "x.exe \x1b[31mmalo\nfalso")
+    )
+    assert main(["scan", "C:", "--admin"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("Administrator permission will be requested to scan C:")
+    assert lines[1] == "Command Windows will receive: x.exe ?[31mmalo?falso"
+
+
+@pytest.mark.parametrize(
+    ("kind", "template"),
+    [
+        (
+            "admin_needs_volume",
+            "Con --admin solo se escanean discos completos (por ejemplo C:), "
+            "no carpetas: {}",
+        ),
+        (
+            "elevation_declined",
+            "Se rechazó el permiso de administrador para {}. No se escaneó nada.",
+        ),
+        (
+            "elevation_timeout",
+            "El escaneo de {} con permisos de administrador tardó demasiado y se "
+            "dejó de esperar; puede seguir corriendo en segundo plano.",
+        ),
+        ("elevation_failed", "No se pudo escanear con permisos de administrador: {}"),
+        (
+            "elevation_no_result",
+            "El escaneo de {} con permisos de administrador no dejó un resultado "
+            "válido.",
+        ),
+        (
+            "unexpected",
+            "Ocurrió un error inesperado en el escaneo con permisos de "
+            "administrador: {}",
+        ),
+    ],
+)
+def test_administrator_errors_go_to_stderr_with_a_cleaned_detail(
+    monkeypatch, capsys, kind, template
+):
+    fake_admin_scan(
+        monkeypatch, error=ScanError(kind, "C:\x1b[31m\nfalso"), announce=()
+    )
+    assert main(["scan", "C:", "--admin"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == template.format("C:?[31m?falso") + "\n"
 
 
 def test_output_never_crashes_on_characters_the_console_cannot_write(monkeypatch):

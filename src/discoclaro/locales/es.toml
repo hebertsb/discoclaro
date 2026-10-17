@@ -12,6 +12,7 @@ growth = "Compara dos fotos y muestra qué creció (aún sin implementar)."
 [cli.scan]
 target_name = "DESTINO"
 target_help = "Disco (por ejemplo C:) o carpeta que se escanea."
+admin_help = "Escanea con permisos de administrador; Windows pedirá permiso. Solo discos completos, como C:."
 
 [format]
 decimal_separator = ","
@@ -25,11 +26,21 @@ space_folder = "Escaneado: {scanned} (el volumen usa {used} de {total} y tiene {
 system_files = "Archivos de sistema, medidos aparte: {size}"
 unreadable = "Rutas sin acceso: {count}"
 unexplained = "Sin explicar: {size} ({percent} % de lo usado)."
-unexplained_warning = "Atención: no se pudo explicar {size}. Puede haber carpetas que solo un administrador puede abrir: abre una terminal como administrador y vuelve a escanear."
+unexplained_warning = "Atención: no se pudo explicar {size}. Puede haber carpetas que solo un administrador puede abrir: prueba con `discoclaro scan {volume} --admin`."
 unexplained_warning_admin = "Atención: aun con permisos de administrador no se pudo explicar {size}. Puede ser espacio propio del sistema de archivos, como metadatos o copias de volumen."
 saved = "Foto guardada: n.º {id} ({nodes} carpetas guardadas)."
+
+[admin]
+announce = "Se pedirá permiso de administrador para escanear {target} en modo solo lectura. Windows mostrará su propia ventana de permisos."
+command = "Orden que recibirá Windows: {command}"
 
 [errors]
 not_fixed_disk = "Solo se pueden escanear discos fijos y esta ruta no está en uno: {target}"
 not_a_folder = "No existe o no es una carpeta: {target}"
 cannot_open_database = "No se pudo abrir la base de datos de discoclaro: {target}"
+admin_needs_volume = "Con --admin solo se escanean discos completos (por ejemplo C:), no carpetas: {target}"
+elevation_declined = "Se rechazó el permiso de administrador para {target}. No se escaneó nada."
+elevation_timeout = "El escaneo de {target} con permisos de administrador tardó demasiado y se dejó de esperar; puede seguir corriendo en segundo plano."
+elevation_failed = "No se pudo escanear con permisos de administrador: {target}"
+elevation_no_result = "El escaneo de {target} con permisos de administrador no dejó un resultado válido."
+unexpected = "Ocurrió un error inesperado en el escaneo con permisos de administrador: {target}"

@@ -80,7 +80,7 @@ def normalize_target(target: str) -> str:
     return ntpath.abspath(target)
 
 
-def _locate(path: str, known: list[Volume]) -> tuple[Volume, str]:
+def locate(path: str, known: list[Volume]) -> tuple[Volume, str]:
     """El volumen de `path` y la ruta con la unidad como la nombra el sistema.
 
     Lanza `ScanError` si la ruta no está en uno de los discos fijos conocidos.
@@ -113,13 +113,13 @@ def scan_target(
     escaneo falla o se interrumpe, no se guarda nada.
     """
     known = volumes()
-    volume, path = _locate(normalize_target(target), known)
+    volume, path = locate(normalize_target(target), known)
     if not is_folder(path):
         raise ScanError("not_a_folder", path)
     # Con las mayúsculas reales y resolviendo los enlaces de la propia raíz, la misma
     # carpeta tiene siempre el mismo nombre en la base, la escriban como la escriban.
     # Si el resultado cae fuera de los discos fijos, se rechaza.
-    volume, path = _locate(canonical_path(path), known)
+    volume, path = locate(canonical_path(path), known)
     is_volume = ntpath.splitdrive(path)[1] == "\\"
 
     taken_at = now()
