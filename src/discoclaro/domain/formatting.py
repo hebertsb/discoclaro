@@ -5,6 +5,7 @@ da quien llama, normalmente desde el catálogo de textos del idioma.
 """
 
 import unicodedata
+from collections.abc import Sequence
 
 _UNITS = ("B", "KiB", "MiB", "GiB", "TiB", "PiB")
 
@@ -52,6 +53,37 @@ def format_duration(seconds: float, decimal: str = ".") -> str:
     if hours:
         return f"{hours} h {minutes:02d} min"
     return f"{minutes} min {secs:02d} s"
+
+
+def format_table(
+    headers: Sequence[str], rows: Sequence[Sequence[str]], align: Sequence[str] = ()
+) -> list[str]:
+    """Tabla de texto alineada por columnas: encabezado, separador y filas.
+
+    `align` da `l` (izquierda, el valor por defecto) o `r` (derecha) para cada columna.
+    """
+    columns = len(headers)
+    for row in rows:
+        if len(row) != columns:
+            raise ValueError("every row must have as many cells as there are headers")
+    alignment = list(align) + ["l"] * (columns - len(align))
+    widths = [
+        max(len(headers[i]), *(len(row[i]) for row in rows))
+        if rows
+        else len(headers[i])
+        for i in range(columns)
+    ]
+
+    def render(cells: Sequence[str]) -> str:
+        parts = [
+            cell.rjust(widths[i]) if alignment[i] == "r" else cell.ljust(widths[i])
+            for i, cell in enumerate(cells)
+        ]
+        return "  ".join(parts).rstrip()
+
+    lines = [render(headers), "  ".join("-" * width for width in widths)]
+    lines.extend(render(row) for row in rows)
+    return lines
 
 
 def safe_text(text: str) -> str:

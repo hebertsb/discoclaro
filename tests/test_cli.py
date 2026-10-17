@@ -3,6 +3,7 @@
 import dataclasses
 import importlib
 import io
+import json
 import tomllib
 import types
 from datetime import UTC, datetime
@@ -11,11 +12,14 @@ from pathlib import Path
 import pytest
 
 from discoclaro import __version__, i18n
-from discoclaro.domain.models import Snapshot, SystemFile
+from discoclaro.domain.formatting import format_table
+from discoclaro.domain.models import Node, Snapshot, SystemFile
 from discoclaro.domain.unexplained import compute_unexplained
 from discoclaro.i18n import t
 from discoclaro.interfaces import cli
 from discoclaro.interfaces.cli import COMMANDS, main
+from discoclaro.services import report_service
+from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
 
 GIB = 1024**3
@@ -77,7 +81,7 @@ def test_version_prints_name_and_version(capsys):
     assert capsys.readouterr().out.strip() == f"discoclaro {__version__}"
 
 
-@pytest.mark.parametrize("command", ["report", "growth"])
+@pytest.mark.parametrize("command", ["growth"])
 def test_commands_not_built_yet_exit_cleanly(command, capsys):
     assert main([command]) == 0
     captured = capsys.readouterr()
@@ -406,6 +410,199 @@ def test_administrator_errors_go_to_stderr_with_a_cleaned_detail(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == template.format("C:?[31m?falso") + "\n"
+
+
+def make_report(**changes):
+    snapshot = Snapshot(
+        taken_at=datetime(2026, 10, 17, 12, 0, tzinfo=UTC),
+        volume="C:",
+        total_bytes=500 * GIB,
+        used_bytes=300 * GIB,
+        free_bytes=200 * GIB,
+        scanned_bytes=290 * GIB,
+        system_files_bytes=int(6.5 * GIB),
+        unreadable_bytes=0,
+        unreadable_count=0,
+        duration_s=68.0,
+        is_admin=False,
+        id=3,
+    )
+    fields = {
+        "snapshot": snapshot,
+        "top_folders": (
+            Node("C:\\Windows", "C:\\", 10 * GIB, 100, 1),
+            Node("C:\\Users", "C:\\", 2 * GIB, 20, 1),
+        ),
+        "total_folders": 500,
+        "unexplained": compute_unexplained(300 * GIB, 290 * GIB, int(6.5 * GIB)),
+    }
+    return Report(**{**fields, **changes})
+
+
+def fake_run_report(monkeypatch, report=None, error=None):
+    """Reemplaza el servicio de informe; devuelve (destino, top) de cada llamada."""
+    calls = []
+
+    def run_report(target, *, top_n=report_service.DEFAULT_TOP_N):
+        calls.append((target, top_n))
+        if error:
+            raise error
+        return report
+
+    monkeypatch.setattr(cli.report_service, "run_report", run_report)
+    return calls
+
+
+def test_report_help_describes_the_target_from_the_catalog(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["report", "--help"])
+    assert exc.value.code == 0
+    shown = " ".join(capsys.readouterr().out.split())
+    assert t("cli.report.target_name") in shown
+    assert t("cli.report.target_help") in shown
+    assert "--top" in shown
+    assert t("cli.report.top_help") in shown
+    assert "--json" in shown
+    assert t("cli.report.json_help") in shown
+
+
+def test_report_passes_the_target_as_typed_and_the_default_top(monkeypatch, capsys):
+    calls = fake_run_report(monkeypatch, make_report())
+    assert main(["report", "c:"]) == 0
+    assert calls == [("c:", report_service.DEFAULT_TOP_N)]
+    capsys.readouterr()
+
+
+def test_report_with_no_target_passes_none(monkeypatch, capsys):
+    calls = fake_run_report(monkeypatch, make_report())
+    assert main(["report"]) == 0
+    assert calls == [(None, report_service.DEFAULT_TOP_N)]
+    capsys.readouterr()
+
+
+def test_report_top_is_passed_through(monkeypatch, capsys):
+    calls = fake_run_report(monkeypatch, make_report())
+    assert main(["report", "C:", "--top", "5"]) == 0
+    assert calls == [("C:", 5)]
+    capsys.readouterr()
+
+
+def test_report_prints_the_table_in_spanish(monkeypatch, capsys):
+    report = make_report()
+    fake_run_report(monkeypatch, report)
+    assert main(["report", "C:"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    taken_at = report.snapshot.taken_at.astimezone().strftime("%Y-%m-%d %H:%M")
+    assert lines[0] == f"Carpetas más grandes de C:, foto del {taken_at} (n.º 3)."
+    rows = [["C:\\Windows", "10,0 GiB", "100"], ["C:\\Users", "2,0 GiB", "20"]]
+    table = format_table(["Carpeta", "Tamaño", "Archivos"], rows, align=("l", "r", "r"))
+    assert lines[1 : 1 + len(table)] == table
+    rest = lines[1 + len(table) :]
+    assert rest == [
+        "Se muestran 2 de 500 carpetas guardadas.",
+        "Sin explicar: 3,5 GiB (1,2 % de lo usado).",
+    ]
+
+
+def test_report_prints_the_table_in_english(monkeypatch, capsys):
+    i18n.set_language("en")
+    report = make_report()
+    fake_run_report(monkeypatch, report)
+    assert main(["report", "C:"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    taken_at = report.snapshot.taken_at.astimezone().strftime("%Y-%m-%d %H:%M")
+    assert lines[0] == f"Largest folders of C:, snapshot of {taken_at} (no. 3)."
+    rows = [["C:\\Windows", "10.0 GiB", "100"], ["C:\\Users", "2.0 GiB", "20"]]
+    table = format_table(["Folder", "Size", "Files"], rows, align=("l", "r", "r"))
+    assert lines[1 : 1 + len(table)] == table
+    rest = lines[1 + len(table) :]
+    assert rest == [
+        "Showing 2 of 500 folders stored.",
+        "Unexplained: 3.5 GiB (1.2% of used).",
+    ]
+
+
+def test_report_with_no_folders_still_shows_the_table_header(monkeypatch, capsys):
+    report = make_report(top_folders=(), total_folders=0)
+    fake_run_report(monkeypatch, report)
+    assert main(["report", "C:"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    table = format_table(["Carpeta", "Tamaño", "Archivos"], [], align=("l", "r", "r"))
+    assert lines[1 : 1 + len(table)] == table
+    assert lines[1 + len(table)] == "Se muestran 0 de 0 carpetas guardadas."
+
+
+def test_report_json_has_the_expected_fields(monkeypatch, capsys):
+    report = make_report()
+    fake_run_report(monkeypatch, report)
+    assert main(["report", "C:", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["target"] == "C:"
+    assert data["snapshot_id"] == 3
+    assert data["total_folders"] == 500
+    assert data["scanned_bytes"] == 290 * GIB
+    assert data["duplicate_bytes"] == 0
+    assert [folder["path"] for folder in data["top_folders"]] == [
+        "C:\\Windows",
+        "C:\\Users",
+    ]
+    assert data["top_folders"][0] == {
+        "path": "C:\\Windows",
+        "size_bytes": 10 * GIB,
+        "n_files": 100,
+        "depth": 1,
+    }
+    expected = compute_unexplained(300 * GIB, 290 * GIB, int(6.5 * GIB))
+    assert data["unexplained"] == {
+        "size_bytes": expected.size_bytes,
+        "percent_of_used": pytest.approx(expected.percent_of_used),
+        "exceeds_threshold": expected.exceeds_threshold,
+    }
+
+
+def test_report_json_with_no_unexplained_space_is_null(monkeypatch, capsys):
+    folder_snapshot = dataclasses.replace(make_report().snapshot, volume="D:\\data")
+    report = make_report(snapshot=folder_snapshot, unexplained=None)
+    fake_run_report(monkeypatch, report)
+    assert main(["report", "D:\\data", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["unexplained"] is None
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        (
+            "report_not_fixed_disk",
+            "Esta ruta no está en un disco fijo, así que no se pudo buscar una foto "
+            "de ella: ",
+        ),
+        (
+            "report_no_snapshot_for_target",
+            "No hay ninguna foto guardada de ",
+        ),
+    ],
+)
+def test_report_errors_go_to_stderr_with_a_safe_target_and_exit_code_1(
+    monkeypatch, capsys, kind, expected
+):
+    fake_run_report(monkeypatch, error=ReportError(kind, "D:\\x\x1b[31m\nfalso"))
+    assert main(["report", "D:\\x"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith(expected)
+    assert "D:\\x?[31m?falso" in captured.err
+
+
+def test_report_with_no_snapshots_at_all_is_reported(monkeypatch, capsys):
+    fake_run_report(monkeypatch, error=ReportError("report_no_snapshots", ""))
+    assert main(["report"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "No hay ninguna foto guardada todavía. Corre `discoclaro scan <disco>` "
+        "primero.\n"
+    )
 
 
 def test_output_never_crashes_on_characters_the_console_cannot_write(monkeypatch):

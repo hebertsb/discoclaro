@@ -7,6 +7,7 @@ from discoclaro.domain.formatting import (
     format_decimal,
     format_duration,
     format_int,
+    format_table,
     safe_text,
 )
 
@@ -126,3 +127,34 @@ def test_format_duration_decimal_separator_and_negatives():
 )
 def test_safe_text(text, expected):
     assert safe_text(text) == expected
+
+
+def test_format_table_aligns_columns_to_the_widest_cell():
+    lines = format_table(
+        ["Carpeta", "Tamaño"],
+        [["C:/Windows", "48.3 GiB"], ["C:/a", "1.0 KiB"]],
+        align=("l", "r"),
+    )
+    assert lines == [
+        "Carpeta       Tamaño",
+        "----------  --------",
+        "C:/Windows  48.3 GiB",
+        "C:/a         1.0 KiB",
+    ]
+
+
+def test_format_table_defaults_every_column_to_the_left():
+    lines = format_table(["a", "b"], [["x", "yy"]])
+    assert lines == ["a  b", "-  --", "x  yy"]
+
+
+def test_format_table_with_no_rows_still_shows_the_header():
+    assert format_table(["Carpeta", "Tamaño"], []) == [
+        "Carpeta  Tamaño",
+        "-------  ------",
+    ]
+
+
+def test_format_table_rejects_a_row_with_the_wrong_number_of_cells():
+    with pytest.raises(ValueError):
+        format_table(["a", "b"], [["x"]])

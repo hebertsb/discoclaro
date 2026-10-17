@@ -14,6 +14,12 @@ target_name = "DESTINO"
 target_help = "Disco (por ejemplo C:) o carpeta que se escanea."
 admin_help = "Escanea con permisos de administrador; Windows pedirá permiso. Solo discos completos, como C:."
 
+[cli.report]
+target_name = "DESTINO"
+target_help = "Disco o carpeta ya escaneados antes (por ejemplo C:); si falta, usa la última foto guardada de cualquiera."
+top_help = "Cuántas carpetas mostrar, de mayor a menor tamaño (20 por defecto)."
+json_help = "Muestra el resultado en JSON en vez de en una tabla."
+
 [format]
 decimal_separator = ","
 thousands_separator = "."
@@ -31,6 +37,13 @@ unexplained_warning = "Atención: no se pudo explicar {size}. Puede haber carpet
 unexplained_warning_admin = "Atención: aun con permisos de administrador no se pudo explicar {size}. Puede ser espacio propio del sistema de archivos, como metadatos o copias de volumen."
 saved = "Foto guardada: n.º {id} ({nodes} carpetas guardadas)."
 
+[report]
+title = "Carpetas más grandes de {target}, foto del {taken_at} (n.º {id})."
+column_path = "Carpeta"
+column_size = "Tamaño"
+column_files = "Archivos"
+shown = "Se muestran {shown} de {total} carpetas guardadas."
+
 [admin]
 announce = "Se pedirá permiso de administrador para escanear {target} en modo solo lectura. Windows mostrará su propia ventana de permisos."
 command = "Orden que recibirá Windows: {command}"
@@ -45,3 +58,6 @@ elevation_timeout = "El escaneo de {target} con permisos de administrador tardó
 elevation_failed = "No se pudo escanear con permisos de administrador: {target}"
 elevation_no_result = "El escaneo de {target} con permisos de administrador no dejó un resultado válido."
 unexpected = "Ocurrió un error inesperado en el escaneo con permisos de administrador: {target}"
+report_not_fixed_disk = "Esta ruta no está en un disco fijo, así que no se pudo buscar una foto de ella: {target}"
+report_no_snapshots = "No hay ninguna foto guardada todavía. Corre `discoclaro scan <disco>` primero."
+report_no_snapshot_for_target = "No hay ninguna foto guardada de {target}. Corre `discoclaro scan {target}` primero."

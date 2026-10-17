@@ -14,6 +14,12 @@ target_name = "TARGET"
 target_help = "Disk (for example C:) or folder to scan."
 admin_help = "Scan with administrator permissions; Windows will ask for permission. Whole disks only, like C:."
 
+[cli.report]
+target_name = "TARGET"
+target_help = "Disk or folder already scanned before (for example C:); if missing, uses the latest snapshot of any of them."
+top_help = "How many folders to show, largest first (20 by default)."
+json_help = "Show the result as JSON instead of a table."
+
 [format]
 decimal_separator = "."
 thousands_separator = ","
@@ -31,6 +37,13 @@ unexplained_warning = "Warning: {size} could not be explained. Some folders may 
 unexplained_warning_admin = "Warning: even with administrator permissions {size} could not be explained. It may be file system space, such as metadata or volume copies."
 saved = "Snapshot saved: no. {id} ({nodes} folders stored)."
 
+[report]
+title = "Largest folders of {target}, snapshot of {taken_at} (no. {id})."
+column_path = "Folder"
+column_size = "Size"
+column_files = "Files"
+shown = "Showing {shown} of {total} folders stored."
+
 [admin]
 announce = "Administrator permission will be requested to scan {target} in read-only mode. Windows will show its own permission window."
 command = "Command Windows will receive: {command}"
@@ -45,3 +58,6 @@ elevation_timeout = "The administrator scan of {target} took too long and was no
 elevation_failed = "Could not scan with administrator permissions: {target}"
 elevation_no_result = "The administrator scan of {target} did not leave a valid result."
 unexpected = "An unexpected error happened in the administrator scan: {target}"
+report_not_fixed_disk = "This path is not on a fixed disk, so no snapshot could be looked up for it: {target}"
+report_no_snapshots = "There is no snapshot saved yet. Run `discoclaro scan <disk>` first."
+report_no_snapshot_for_target = "There is no snapshot saved of {target}. Run `discoclaro scan {target}` first."
