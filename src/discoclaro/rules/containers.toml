@@ -1,0 +1,20 @@
+# Catálogo inicial de reglas, categoría "containers" (sección 6 del plan).
+# Una regla es siempre un dato: nada de lo que hay aquí se ejecuta solo.
+
+[[rule]]
+id = "docker-vhdx"
+name = "Disco virtual de Docker"
+paths = ["%LOCALAPPDATA%\\Docker\\wsl\\disk\\docker_data.vhdx"]
+category = "containers"
+risk = "review"
+explanation = "Docker guarda aquí imágenes, contenedores y volúmenes. Borrar imágenes no encoge este archivo."
+task_id = "compact_docker_vhdx"
+
+[rule.suggested_action]
+type = "command"
+text = "docker builder prune -af"
+note = "Después, wsl --shutdown y compactar con diskpart (compact vdisk)."
+
+[rule.reacquire]
+kind = "rebuild"
+cost = "Docker vuelve a bajar o construir lo que se borre"

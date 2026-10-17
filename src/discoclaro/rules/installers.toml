@@ -1,0 +1,19 @@
+# Catálogo inicial de reglas, categoría "installers" (sección 6 del plan).
+# Una regla es siempre un dato: nada de lo que hay aquí se ejecuta solo.
+
+[[rule]]
+id = "downloads-installers"
+name = "Instaladores en Descargas"
+paths = [
+    "%USERPROFILE%\\Downloads\\**\\*.exe",
+    "%USERPROFILE%\\Downloads\\**\\*.msi",
+    "%USERPROFILE%\\Downloads\\**\\*.iso",
+    "%USERPROFILE%\\Downloads\\**\\*.zip",
+]
+category = "installers"
+risk = "review"
+explanation = "Instaladores descargados que ya se usaron y quedaron sin borrar."
+
+[rule.suggested_action]
+type = "command"
+text = "Borrar los que ya se instalaron, o mover a otro disco."

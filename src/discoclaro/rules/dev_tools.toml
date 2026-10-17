@@ -1,0 +1,19 @@
+# Catálogo inicial de reglas, categoría "dev_tools" (sección 6 del plan).
+# Una regla es siempre un dato: nada de lo que hay aquí se ejecuta solo.
+
+[[rule]]
+id = "android-emulator"
+name = "Emulador de Android"
+paths = [
+    "%LOCALAPPDATA%\\Android\\Sdk\\emulator",
+    "%LOCALAPPDATA%\\Android\\Sdk\\system-images",
+    "%LOCALAPPDATA%\\Android\\Sdk\\sources",
+]
+category = "dev_tools"
+risk = "review"
+explanation = "Imágenes de sistema y el emulador del SDK de Android, para probar apps sin un celular."
+
+[rule.suggested_action]
+type = "command"
+text = "Solo si no existe %USERPROFILE%\\.android\\avd."
+note = "No tocar build-tools, platforms, platform-tools, ndk ni cmake si se compila con Flutter."

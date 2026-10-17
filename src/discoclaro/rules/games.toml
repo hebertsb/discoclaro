@@ -1,0 +1,14 @@
+# Catálogo inicial de reglas, categoría "games" (sección 6 del plan).
+# Una regla es siempre un dato: nada de lo que hay aquí se ejecuta solo.
+
+[[rule]]
+id = "steam-game"
+name = "Juego de Steam"
+paths = ["**\\steamapps\\common\\*"]
+category = "games"
+risk = "review"
+explanation = "Los archivos de un juego instalado por Steam."
+
+[rule.suggested_action]
+type = "command"
+text = "Mover la biblioteca a otro disco desde Steam."

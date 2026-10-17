@@ -1,0 +1,14 @@
+# Catálogo inicial de reglas, categoría "dependencies" (sección 6 del plan).
+# Una regla es siempre un dato: nada de lo que hay aquí se ejecuta solo.
+
+[[rule]]
+id = "node-modules"
+name = "Dependencias de Node.js"
+paths = ["**\\node_modules"]
+category = "dependencies"
+risk = "safe"
+explanation = "Dependencias de un proyecto de Node.js, instaladas por npm, yarn o pnpm."
+
+[rule.suggested_action]
+type = "command"
+text = "Se reinstala con el gestor de paquetes (cuidado con proyectos activos)."

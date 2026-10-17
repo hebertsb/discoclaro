@@ -1,0 +1,74 @@
+# Catálogo inicial de reglas, categoría "cache" (sección 6 del plan).
+# Una regla es siempre un dato: nada de lo que hay aquí se ejecuta solo.
+
+[[rule]]
+id = "pip-cache"
+name = "Caché de pip"
+paths = ["%LOCALAPPDATA%\\pip\\Cache"]
+category = "cache"
+risk = "safe"
+explanation = "Paquetes de Python ya descargados, para no bajarlos de nuevo en la próxima instalación."
+
+[rule.suggested_action]
+type = "command"
+text = "pip cache purge"
+
+[[rule]]
+id = "uv-cache"
+name = "Caché de uv"
+paths = ["%LOCALAPPDATA%\\uv\\cache"]
+category = "cache"
+risk = "safe"
+explanation = "Lo mismo que la caché de pip, pero del instalador uv."
+
+[rule.suggested_action]
+type = "command"
+text = "uv cache clean"
+
+[[rule]]
+id = "npm-cache"
+name = "Caché de npm"
+paths = ["%LOCALAPPDATA%\\npm-cache"]
+category = "cache"
+risk = "safe"
+explanation = "Paquetes de Node.js ya descargados."
+
+[rule.suggested_action]
+type = "command"
+text = "npm cache clean --force"
+
+[[rule]]
+id = "gradle-caches"
+name = "Caché de Gradle"
+paths = ["%USERPROFILE%\\.gradle\\caches"]
+category = "cache"
+risk = "safe"
+explanation = "Dependencias y metadatos que Gradle descarga para compilar proyectos."
+
+[rule.suggested_action]
+type = "command"
+text = "Borrar la carpeta; se reconstruye (la próxima compilación tarda más)."
+
+[[rule]]
+id = "conda-pkgs"
+name = "Paquetes de conda"
+paths = ["%USERPROFILE%\\miniconda3\\pkgs"]
+category = "cache"
+risk = "safe"
+explanation = "Paquetes descargados por conda o miniconda, compartidos entre entornos."
+
+[rule.suggested_action]
+type = "command"
+text = "conda clean --all"
+
+[[rule]]
+id = "vscode-workspace"
+name = "Caché de espacios de trabajo de VS Code"
+paths = ["%APPDATA%\\Code\\User\\workspaceStorage"]
+category = "cache"
+risk = "review"
+explanation = "Caché por proyecto de Visual Studio Code (búsquedas, estado de la interfaz)."
+
+[rule.suggested_action]
+type = "command"
+text = "Cerrar el editor y borrar la carpeta."

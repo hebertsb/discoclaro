@@ -1,0 +1,14 @@
+# Catálogo inicial de reglas, categoría "app_vms" (sección 6 del plan).
+# Una regla es siempre un dato: nada de lo que hay aquí se ejecuta solo.
+
+[[rule]]
+id = "app-vm-bundle"
+name = "Máquina virtual de una aplicación"
+paths = ["%APPDATA%\\<app>\\vm_bundles"]
+category = "app_vms"
+risk = "review"
+explanation = "Una máquina virtual completa que empaquetó una aplicación de escritorio."
+
+[rule.suggested_action]
+type = "command"
+text = "Cerrar la aplicación y borrar; se vuelve a descargar."

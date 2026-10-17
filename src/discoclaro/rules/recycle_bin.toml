@@ -1,0 +1,14 @@
+# Catálogo inicial de reglas, categoría "recycle_bin" (sección 6 del plan).
+# Una regla es siempre un dato: nada de lo que hay aquí se ejecuta solo.
+
+[[rule]]
+id = "recycle-bin"
+name = "Papelera de reciclaje"
+paths = ["<volumen>\\$Recycle.Bin"]
+category = "recycle_bin"
+risk = "safe"
+explanation = "Lo que se borró y todavía no se vació de la Papelera."
+
+[rule.suggested_action]
+type = "command"
+text = "Vaciar la Papelera."

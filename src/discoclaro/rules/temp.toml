@@ -1,0 +1,14 @@
+# Catálogo inicial de reglas, categoría "temp" (sección 6 del plan).
+# Una regla es siempre un dato: nada de lo que hay aquí se ejecuta solo.
+
+[[rule]]
+id = "temp"
+name = "Carpeta temporal"
+paths = ["%TEMP%"]
+category = "temp"
+risk = "safe"
+explanation = "Archivos temporales de Windows y de programas; la mayoría ya no se usa."
+
+[rule.suggested_action]
+type = "command"
+text = "Borrar lo que no esté en uso."

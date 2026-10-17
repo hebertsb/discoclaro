@@ -1,0 +1,14 @@
+# Catálogo inicial de reglas, categoría "backups" (sección 6 del plan).
+# Una regla es siempre un dato: nada de lo que hay aquí se ejecuta solo.
+
+[[rule]]
+id = "windows-backup"
+name = "Copia de seguridad de Windows"
+paths = ["<volumen>\\<NOMBRE-PC>\\Backup Set *"]
+category = "backups"
+risk = "do_not_touch"
+explanation = "Una copia de seguridad hecha con la herramienta de Windows."
+
+[rule.suggested_action]
+type = "command"
+text = "Panel de control → Copia de seguridad → Administrar espacio."

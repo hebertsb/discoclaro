@@ -1,0 +1,38 @@
+# Catálogo inicial de reglas, categoría "system" (sección 6 del plan).
+# Una regla es siempre un dato: nada de lo que hay aquí se ejecuta solo.
+
+[[rule]]
+id = "hiberfil"
+name = "Archivo de hibernación"
+paths = ["C:\\hiberfil.sys"]
+category = "system"
+risk = "do_not_touch"
+explanation = "Guarda el estado de la memoria para la hibernación de Windows."
+
+[rule.suggested_action]
+type = "command"
+text = "powercfg /h off (como administrador) quita la hibernación."
+
+[[rule]]
+id = "pagefile"
+name = "Archivo de paginación"
+paths = ["<volumen>\\pagefile.sys"]
+category = "system"
+risk = "do_not_touch"
+explanation = "El archivo de paginación: memoria virtual que usa Windows."
+
+[rule.suggested_action]
+type = "command"
+text = "Se ajusta en Configuración avanzada del sistema → Rendimiento."
+
+[[rule]]
+id = "windows-installer"
+name = "Caché del instalador de Windows"
+paths = ["C:\\Windows\\Installer"]
+category = "system"
+risk = "do_not_touch"
+explanation = "Caché de instaladores de Windows (.msi, .msp); el propio sistema la usa para reparar y desinstalar programas."
+
+[rule.suggested_action]
+type = "command"
+text = "Liberador de espacio en disco → Limpiar archivos del sistema."

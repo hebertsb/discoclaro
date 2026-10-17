@@ -2,8 +2,13 @@
 
 import pytest
 
-from discoclaro.adapters.rules import RuleError, load_rules_file, load_rules_from_text
-from discoclaro.domain.rules import Reacquire, SuggestedAction
+from discoclaro.adapters.rules import (
+    RuleError,
+    load_builtin_catalog,
+    load_rules_file,
+    load_rules_from_text,
+)
+from discoclaro.domain.rules import RISK_LEVELS, Reacquire, SuggestedAction
 
 MINIMAL = """
 [[rule]]
@@ -134,3 +139,44 @@ def test_load_rules_file_reads_a_real_file(tmp_path):
 def test_load_rules_file_reports_a_missing_file(tmp_path):
     with pytest.raises(RuleError):
         load_rules_file(tmp_path / "no_existe.toml")
+
+
+def test_the_builtin_catalog_loads_the_real_table_from_the_plan():
+    """Carga de verdad los archivos reales de `discoclaro/rules/` (T2.2)."""
+    rules = load_builtin_catalog()
+    assert len(rules) == 22
+    ids = [rule.id for rule in rules]
+    assert len(set(ids)) == len(ids)
+    assert "docker-vhdx" in ids
+    for rule in rules:
+        assert rule.risk in RISK_LEVELS
+        assert rule.category
+
+
+def test_the_builtin_catalog_has_the_four_do_not_touch_rules_from_the_table():
+    rules = load_builtin_catalog()
+    do_not_touch = {rule.id for rule in rules if rule.risk == "do_not_touch"}
+    assert do_not_touch == {
+        "windows-backup",
+        "hiberfil",
+        "pagefile",
+        "windows-installer",
+    }
+
+
+def test_the_builtin_catalog_is_grouped_into_twelve_categories():
+    rules = load_builtin_catalog()
+    categories = {rule.category for rule in rules}
+    assert len(categories) == 12
+
+
+def test_the_worked_example_from_the_plan_matches_the_builtin_catalog():
+    """El ejemplo de docker-vhdx de la sección 5 del plan tiene que seguir igual."""
+    [docker] = [rule for rule in load_builtin_catalog() if rule.id == "docker-vhdx"]
+    assert docker.paths == ("%LOCALAPPDATA%\\Docker\\wsl\\disk\\docker_data.vhdx",)
+    assert docker.category == "containers"
+    assert docker.risk == "review"
+    assert docker.task_id == "compact_docker_vhdx"
+    assert docker.reacquire == Reacquire(
+        kind="rebuild", cost="Docker vuelve a bajar o construir lo que se borre"
+    )

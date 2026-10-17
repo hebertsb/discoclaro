@@ -1,4 +1,4 @@
-"""Carga el catálogo de reglas desde texto o archivos TOML (T2.1).
+"""Carga el catálogo de reglas desde texto o archivos TOML (T2.1, T2.2).
 
 Una regla es siempre un dato, nunca código: esto solo arma objetos `Rule`, valida su
 forma (campos obligatorios, valores de `risk` y de `reacquire`) y nunca interpreta ni
@@ -8,11 +8,15 @@ aquí solo se cuida la forma.
 """
 
 import tomllib
+from importlib.resources import files
 from pathlib import Path
 
 from discoclaro.domain.rules import Reacquire, Rule, SuggestedAction
 
 _REQUIRED_STR_FIELDS = ("id", "name", "category", "risk", "explanation")
+BUILTIN_RULES_PACKAGE = "discoclaro"
+BUILTIN_RULES_FOLDER = "rules"
+_BUILTIN_PACKAGE = "discoclaro.rules"
 
 
 class RuleError(Exception):
@@ -60,6 +64,29 @@ def load_rules_file(path: str | Path) -> list[Rule]:
             f"{path}: could not read it ({type(error).__name__})"
         ) from error
     return load_rules_from_text(text, source=str(path))
+
+
+def load_builtin_catalog() -> list[Rule]:
+    """El catálogo inicial que trae discoclaro (sección 6 del plan), un archivo por
+    categoría en `discoclaro/rules/`. Lanza `RuleError` si algún archivo no tiene el
+    formato esperado, o si dos reglas de archivos distintos repiten el mismo id.
+    """
+    directory = files(BUILTIN_RULES_PACKAGE).joinpath(BUILTIN_RULES_FOLDER)
+    rules: list[Rule] = []
+    seen: dict[str, str] = {}
+    for entry in sorted(directory.iterdir(), key=lambda item: item.name):
+        if not entry.name.endswith(".toml"):
+            continue
+        for rule in load_rules_from_text(entry.read_text(encoding="utf-8"), entry.name):
+            if rule.id in seen:
+                raise RuleError(
+                    f"{entry.name}: duplicate rule id, already used in "
+                    f"{seen[rule.id]}: {rule.id!r}",
+                    rule.id,
+                )
+            seen[rule.id] = entry.name
+            rules.append(rule)
+    return rules
 
 
 def _build_rule(raw: object, source: str) -> Rule:

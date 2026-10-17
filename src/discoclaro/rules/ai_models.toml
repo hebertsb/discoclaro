@@ -1,0 +1,50 @@
+# Catálogo inicial de reglas, categoría "ai_models" (sección 6 del plan).
+# Una regla es siempre un dato: nada de lo que hay aquí se ejecuta solo.
+
+[[rule]]
+id = "ollama-models"
+name = "Modelos de Ollama"
+paths = ["%USERPROFILE%\\.ollama\\models"]
+category = "ai_models"
+risk = "review"
+explanation = "Los modelos que bajó Ollama para correr localmente; pueden pesar varios gigabytes cada uno."
+
+[rule.suggested_action]
+type = "command"
+text = "ollama list y ollama rm <modelo>; para cambiar dónde se guardan, la variable OLLAMA_MODELS."
+
+[[rule]]
+id = "hf-cache"
+name = "Caché de Hugging Face"
+paths = ["%USERPROFILE%\\.cache\\huggingface"]
+category = "ai_models"
+risk = "review"
+explanation = "Modelos y datasets que bajaron herramientas que usan Hugging Face."
+
+[rule.suggested_action]
+type = "command"
+text = "Borrar los modelos que ya no uses."
+
+[[rule]]
+id = "gguf-files"
+name = "Archivos de modelos GGUF"
+paths = ["**\\*.gguf"]
+category = "ai_models"
+risk = "review"
+explanation = "Archivos de modelos de lenguaje en formato GGUF, sueltos en cualquier carpeta."
+
+[rule.suggested_action]
+type = "command"
+text = "Mover a otro disco o borrar."
+
+[[rule]]
+id = "browser-ai-model"
+name = "Modelo de IA del navegador"
+paths = ["**\\Chrome\\User Data\\OptGuideOnDeviceModel"]
+category = "ai_models"
+risk = "review"
+explanation = "Un modelo de IA que el navegador bajó para funciones integradas."
+
+[rule.suggested_action]
+type = "command"
+text = "Cerrar el navegador y borrar la carpeta; se puede volver a bajar."
