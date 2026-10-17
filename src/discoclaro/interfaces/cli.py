@@ -93,12 +93,19 @@ def _announce_elevation(volume: str, command: str) -> None:
     print(t("admin.command", command=safe_text(command)))
 
 
+def _announce_writable_install(directory: str) -> None:
+    """Avisa, antes de pedir el permiso, si la carpeta del paquete se puede escribir."""
+    print(t("admin.writable_warning", directory=safe_text(directory)))
+
+
 def _scan(target: str, admin: bool = False) -> int:
     """Escanea `target`, guarda la foto y muestra el resumen."""
     try:
         if admin:
             summary = elevation_service.run_admin_scan(
-                target, on_elevate=_announce_elevation
+                target,
+                on_elevate=_announce_elevation,
+                on_integrity_warning=_announce_writable_install,
             )
         else:
             summary = scan_service.run_scan(target)

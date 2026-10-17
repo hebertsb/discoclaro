@@ -167,12 +167,16 @@ def run_scan(target: str, data_dir: Path | None = None) -> ScanSummary:
     """Escanea `target` y guarda la foto en la base propia de discoclaro.
 
     La base vive en `%LOCALAPPDATA%\\discoclaro`, o en `data_dir` si se da (para
-    probar). Se crea la carpeta si falta.
+    probar). Se crea la carpeta si falta. Antes de escribir en la base, `Store.open`
+    revalida que ni la carpeta ni el archivo sean un enlace o tengan otro nombre
+    (T1.9); si lo son, no se escribe nada.
     """
     try:
         directory = windows.default_data_dir() if data_dir is None else data_dir
         directory.mkdir(parents=True, exist_ok=True)
         store = Store.open(directory / DATABASE_NAME)
+    except windows.UnsafeDataLocation as error:
+        raise ScanError("unsafe_data_location", str(error)) from error
     except (OSError, sqlite3.Error, StoreError) as error:
         raise ScanError("cannot_open_database", str(error)) from error
     with store:

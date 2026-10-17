@@ -22,6 +22,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from discoclaro.adapters import package_integrity
+from discoclaro.adapters.package_integrity import IntegrityCheck
 from discoclaro.adapters.store import Store, StoreError
 from discoclaro.adapters.volumes import list_volumes
 from discoclaro.domain.models import Volume
@@ -37,6 +39,8 @@ MAX_RESULT_BYTES = 16 * 1024
 MAX_DETAIL_CHARS = 300
 MAX_COUNT = 10**12
 DEFAULT_TIMEOUT_S = 3600.0
+PACKAGE_NAME = "discoclaro"
+MAX_SHOWN_MISMATCHES = 3
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -45,9 +49,26 @@ EXIT_NOT_ELEVATED = 3
 
 # Errores que el proceso elevado puede informar; cualquier otro llega como inesperado.
 REPORTABLE_KINDS = frozenset(
-    {"not_fixed_disk", "not_a_folder", "cannot_open_database", "unexpected"}
+    {
+        "not_fixed_disk",
+        "not_a_folder",
+        "cannot_open_database",
+        "unsafe_data_location",
+        "unexpected",
+    }
 )
 _COUNT_FIELDS = ("snapshot_id", "folders", "files", "skipped_links", "nodes_saved")
+
+
+def _check_installed_integrity() -> IntegrityCheck:
+    """Compara los archivos instalados de discoclaro con los de su `RECORD` (T1.9)."""
+    return package_integrity.check_installed_files(PACKAGE_NAME)
+
+
+def _describe_mismatches(mismatches: tuple[str, ...]) -> str:
+    """Las primeras rutas que no coinciden, para no desbordar la pantalla con todas."""
+    shown = ", ".join(mismatches[:MAX_SHOWN_MISMATCHES])
+    return shown + ("…" if len(mismatches) > MAX_SHOWN_MISMATCHES else "")
 
 
 class ResultError(Exception):
@@ -57,11 +78,15 @@ class ResultError(Exception):
 def write_result(directory: Path, result: dict[str, object]) -> None:
     """Escribe el resultado en la carpeta de datos, con campos fijos.
 
-    Escritura normal: no comprueba si la ruta es un enlace (omisión consciente, ver
-    el plan).
+    Revalida justo antes de escribir que ni la carpeta ni el archivo sean un enlace o
+    tengan otro nombre (T1.9): si algo no cuadra, no escribe nada y deja que el
+    `OSError` suba (`UnsafeDataLocation` es uno).
     """
+    path = directory / RESULT_NAME
+    windows.ensure_safe_to_write(directory)
+    windows.ensure_safe_to_write(path)
     payload = json.dumps(result, separators=(",", ":"))
-    (directory / RESULT_NAME).write_text(payload, encoding="utf-8")
+    path.write_text(payload, encoding="utf-8")
 
 
 def read_result(directory: Path) -> dict[str, object]:
@@ -120,19 +145,36 @@ def run_admin_scan(
     volumes: Callable[[], list[Volume]] = list_volumes,
     is_admin: Callable[[], bool] = windows.is_admin,
     on_elevate: Callable[[str, str], None] | None = None,
+    on_integrity_warning: Callable[[str], None] | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
+    check_integrity: Callable[[], IntegrityCheck] = _check_installed_integrity,
+    writable: Callable[[Path], bool] = package_integrity.is_writable_by_the_user,
 ) -> ScanSummary:
     """Escanea un volumen completo con permisos de administrador.
 
     Solo acepta volúmenes (`C:`), nunca carpetas. Si este proceso ya tiene permisos,
-    escanea aquí mismo; si no, pide la ventana de permisos de Windows y lanza el punto
-    de entrada fijo. `on_elevate` recibe el volumen y la orden exacta, ya con sus
-    comillas, justo antes de pedir el permiso. Lanza `ScanError` con la clave del
-    mensaje que corresponda.
+    escanea aquí mismo (ya es tarde para esta comprobación: lo que corre es lo que
+    hay). Si no, antes de pedir nada compara lo instalado con su `RECORD` (T1.9): si
+    algo no coincide, se niega a pedir el permiso (`ScanError` con clave
+    `integrity_failed`) y nunca llega a llamar a Windows. Una instalación editable (la
+    de desarrollo) no tiene con qué comparar sus archivos fuente y no se bloquea por
+    eso, pero si además la carpeta del paquete se puede escribir, `on_integrity_warning`
+    recibe esa carpeta antes de pedir el permiso. `on_elevate` recibe el volumen y la
+    orden exacta, ya con sus comillas, justo antes de pedir el permiso.
     """
     volume = _volume_of(target, volumes())
     if is_admin():
         return scan_service.run_scan(volume.name, data_dir)
+
+    check = check_integrity()
+    if not check.ok:
+        raise ScanError("integrity_failed", _describe_mismatches(check.mismatches))
+    if (
+        not check.editable
+        and on_integrity_warning is not None
+        and writable(check.base_dir)
+    ):
+        on_integrity_warning(str(check.base_dir))
 
     try:
         directory = windows.default_data_dir() if data_dir is None else data_dir

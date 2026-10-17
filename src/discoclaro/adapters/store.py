@@ -12,7 +12,7 @@ Reglas (amenaza 3 del modelo de amenazas):
 
 import re
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from os import PathLike
 from pathlib import Path
@@ -20,6 +20,7 @@ from types import TracebackType
 from typing import Self
 
 from discoclaro.domain.models import Node, Snapshot
+from discoclaro.platform import windows
 
 BUSY_TIMEOUT_S = 5.0
 
@@ -135,12 +136,25 @@ class Store:
         self._connection = connection
 
     @classmethod
-    def open(cls, path: str | PathLike[str]) -> Self:
+    def open(
+        cls,
+        path: str | PathLike[str],
+        *,
+        ensure_safe: Callable[
+            [str | PathLike[str]], None
+        ] = windows.ensure_safe_to_write,
+    ) -> Self:
         """Abre la base para leer y escribir; si no existe la crea y la deja al día.
 
-        La carpeta de `path` tiene que existir. Lanza `StoreError` si la base es de una
-        versión más nueva del programa, y `sqlite3.DatabaseError` si no es una base.
+        La carpeta de `path` tiene que existir. Antes de tocar nada revalida que ni la
+        carpeta ni el archivo sean un enlace o tengan otro nombre (T1.9); si `path`
+        todavía no existe, no hay nada que revalidar. Lanza `StoreError` si la base es
+        de una versión más nueva del programa, y `sqlite3.DatabaseError` si no es una
+        base.
         """
+        path = Path(path)
+        ensure_safe(path.parent)
+        ensure_safe(path)
         connection = sqlite3.connect(path, timeout=BUSY_TIMEOUT_S, isolation_level=None)
         try:
             _refuse_if_newer(connection)

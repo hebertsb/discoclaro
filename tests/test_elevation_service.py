@@ -4,10 +4,13 @@ import inspect
 import json
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from discoclaro.adapters import package_integrity
+from discoclaro.adapters.package_integrity import IntegrityCheck
 from discoclaro.adapters.store import Store
 from discoclaro.adapters.volumes import list_volumes
 from discoclaro.domain.models import Node, Snapshot, Volume
@@ -89,6 +92,21 @@ class FakeRunner:
         return self.code
 
 
+def ok_check(**changes):
+    """Una comprobación de integridad que siempre da bien, salvo lo que se cambie."""
+    fields = {
+        "ok": True,
+        "editable": False,
+        "mismatches": (),
+        "base_dir": Path("R:\\python\\site-packages"),
+    }
+    return IntegrityCheck(**{**fields, **changes})
+
+
+def forbidden_writable(base_dir):
+    raise AssertionError("no debería mirar si se puede escribir ahí")
+
+
 def run(directory, runner, target="C:", **overrides):
     options = {
         "data_dir": directory,
@@ -96,9 +114,116 @@ def run(directory, runner, target="C:", **overrides):
         "executable": EXECUTABLE,
         "volumes": fake_volumes,
         "is_admin": lambda: False,
+        # Por defecto una comprobación falsa que siempre pasa: las pruebas de abajo no
+        # dependen de si este .venv está instalado en modo editable o no.
+        "check_integrity": ok_check,
+        "writable": lambda base_dir: False,
     }
     options.update(overrides)
     return run_admin_scan(target, **options)
+
+
+def test_a_mismatched_installation_refuses_to_ask_for_elevation(tmp_path):
+    runner = FakeRunner()
+    check = ok_check(ok=False, mismatches=("discoclaro/bad.py", "discoclaro/x.py"))
+    with pytest.raises(ScanError) as error:
+        run(tmp_path, runner, check_integrity=lambda: check)
+    assert error.value.kind == "integrity_failed"
+    assert error.value.target == "discoclaro/bad.py, discoclaro/x.py"
+    assert runner.calls == []
+
+
+def test_more_than_three_mismatches_are_summarized(tmp_path):
+    check = ok_check(ok=False, mismatches=tuple(f"a{i}.py" for i in range(5)))
+    with pytest.raises(ScanError) as error:
+        run(tmp_path, FakeRunner(), check_integrity=lambda: check)
+    assert error.value.target == "a0.py, a1.py, a2.py…"
+
+
+def test_an_editable_install_is_never_blocked_and_never_warned(tmp_path):
+    runner = FakeRunner(action=lambda: write_result(tmp_path, failure_result()))
+    seen = []
+    check = ok_check(editable=True)
+    with pytest.raises(ScanError):
+        run(
+            tmp_path,
+            runner,
+            check_integrity=lambda: check,
+            writable=forbidden_writable,
+            on_integrity_warning=seen.append,
+        )
+    assert seen == []
+    assert runner.calls != []
+
+
+def test_a_writable_install_location_is_announced_before_elevating(tmp_path):
+    runner = FakeRunner(action=lambda: write_result(tmp_path, failure_result()))
+    seen = []
+    check = ok_check(base_dir=Path("C:\\Users\\x\\venv\\site-packages"))
+    with pytest.raises(ScanError):
+        run(
+            tmp_path,
+            runner,
+            check_integrity=lambda: check,
+            writable=lambda base_dir: True,
+            on_integrity_warning=seen.append,
+        )
+    assert seen == ["C:\\Users\\x\\venv\\site-packages"]
+    assert runner.calls != []
+
+
+def test_a_protected_install_location_is_not_announced(tmp_path):
+    runner = FakeRunner(action=lambda: write_result(tmp_path, failure_result()))
+    seen = []
+    with pytest.raises(ScanError):
+        run(
+            tmp_path,
+            runner,
+            check_integrity=ok_check,
+            writable=lambda base_dir: False,
+            on_integrity_warning=seen.append,
+        )
+    assert seen == []
+
+
+def test_no_warning_callback_means_the_writable_check_is_not_even_run(tmp_path):
+    runner = FakeRunner(action=lambda: write_result(tmp_path, failure_result()))
+    with pytest.raises(ScanError):
+        run(tmp_path, runner, check_integrity=ok_check, writable=forbidden_writable)
+
+
+def test_already_elevated_skips_the_integrity_check_entirely(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        scan_service, "run_scan", lambda target, data_dir: "the summary"
+    )
+
+    def forbidden_check():
+        raise AssertionError("no debería comprobar la integridad: ya está elevado")
+
+    result = run(
+        tmp_path,
+        FakeRunner(),
+        is_admin=lambda: True,
+        check_integrity=forbidden_check,
+        writable=forbidden_writable,
+    )
+    assert result == "the summary"
+
+
+def test_the_real_integrity_check_lets_this_editable_install_proceed(tmp_path):
+    """Este repo está instalado en modo editable: la comprobación real no bloquea."""
+    runner = FakeRunner(action=lambda: write_result(tmp_path, failure_result()))
+    with pytest.raises(ScanError) as error:
+        run_admin_scan(
+            "C:",
+            data_dir=tmp_path,
+            runner=runner,
+            executable=EXECUTABLE,
+            volumes=fake_volumes,
+            is_admin=lambda: False,
+        )
+    assert error.value.kind != "integrity_failed"
+    assert runner.calls != []
 
 
 def test_the_command_is_fixed_and_only_the_drive_letter_changes(tmp_path):
@@ -324,3 +449,4 @@ def test_the_real_pieces_are_the_defaults_without_calling_them():
     assert parameters["volumes"].default is list_volumes
     assert parameters["is_admin"].default is windows.is_admin
     assert parameters["timeout_s"].default == DEFAULT_TIMEOUT_S
+    assert parameters["writable"].default is package_integrity.is_writable_by_the_user

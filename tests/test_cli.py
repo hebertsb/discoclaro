@@ -303,12 +303,16 @@ def test_errors_go_to_stderr_with_a_safe_target_and_exit_code_1(
 COMMAND = "R:\\python\\python.exe -I -m discoclaro.interfaces.elevated scan C:"
 
 
-def fake_admin_scan(monkeypatch, summary=None, error=None, announce=(("C:", COMMAND))):
+def fake_admin_scan(
+    monkeypatch, summary=None, error=None, announce=(("C:", COMMAND)), warning=None
+):
     """Reemplaza el servicio de administrador; devuelve los destinos recibidos."""
     calls = []
 
-    def run_admin_scan(target, *, on_elevate=None):
+    def run_admin_scan(target, *, on_elevate=None, on_integrity_warning=None):
         calls.append(target)
+        if on_integrity_warning and warning:
+            on_integrity_warning(warning)
         if on_elevate and announce:
             on_elevate(*announce)
         if error:
@@ -370,6 +374,38 @@ def test_the_announcement_is_translated_and_cleaned(monkeypatch, capsys):
     assert lines[1] == "Command Windows will receive: x.exe ?[31mmalo?falso"
 
 
+def test_a_writable_install_is_announced_before_the_elevation_announcement(
+    monkeypatch, capsys
+):
+    fake_admin_scan(monkeypatch, make_summary(), warning="C:\\Users\\x\\venv")
+    assert main(["scan", "C:", "--admin"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == (
+        "Aviso: la carpeta donde está instalado discoclaro (C:\\Users\\x\\venv) se "
+        "puede escribir con tu usuario. Es normal en una instalación de desarrollo "
+        "o en un entorno virtual; en una instalación protegida no debería pasar."
+    )
+    assert lines[1].startswith("Se pedirá permiso de administrador")
+
+
+def test_the_writable_warning_is_translated_and_cleaned(monkeypatch, capsys):
+    i18n.set_language("en")
+    fake_admin_scan(monkeypatch, make_summary(), warning="C:\\x\x1b[31m\nfalso")
+    assert main(["scan", "C:", "--admin"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == (
+        "Notice: the folder where discoclaro is installed (C:\\x?[31m?falso) can "
+        "be written to by your user. This is normal for a development install or "
+        "a virtual environment; it should not happen on a protected install."
+    )
+
+
+def test_no_writable_warning_line_when_nothing_was_reported(monkeypatch, capsys):
+    fake_admin_scan(monkeypatch, make_summary())
+    assert main(["scan", "C:", "--admin"]) == 0
+    assert "Aviso" not in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     ("kind", "template"),
     [
@@ -397,6 +433,16 @@ def test_the_announcement_is_translated_and_cleaned(monkeypatch, capsys):
             "unexpected",
             "Ocurrió un error inesperado en el escaneo con permisos de "
             "administrador: {}",
+        ),
+        (
+            "integrity_failed",
+            "No se pidió el permiso de administrador: lo instalado no coincide con "
+            "lo esperado ({}). Reinstala discoclaro y vuelve a intentarlo.",
+        ),
+        (
+            "unsafe_data_location",
+            "No se escribió nada: {} es un enlace o tiene más de un nombre, así "
+            "que no es seguro escribir ahí. Revísalo a mano.",
         ),
     ],
 )

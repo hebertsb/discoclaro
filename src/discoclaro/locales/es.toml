@@ -47,6 +47,7 @@ shown = "Se muestran {shown} de {total} carpetas guardadas."
 [admin]
 announce = "Se pedirá permiso de administrador para escanear {target} en modo solo lectura. Windows mostrará su propia ventana de permisos."
 command = "Orden que recibirá Windows: {command}"
+writable_warning = "Aviso: la carpeta donde está instalado discoclaro ({directory}) se puede escribir con tu usuario. Es normal en una instalación de desarrollo o en un entorno virtual; en una instalación protegida no debería pasar."
 
 [errors]
 not_fixed_disk = "Solo se pueden escanear discos fijos y esta ruta no está en uno: {target}"
@@ -61,3 +62,5 @@ unexpected = "Ocurrió un error inesperado en el escaneo con permisos de adminis
 report_not_fixed_disk = "Esta ruta no está en un disco fijo, así que no se pudo buscar una foto de ella: {target}"
 report_no_snapshots = "No hay ninguna foto guardada todavía. Corre `discoclaro scan <disco>` primero."
 report_no_snapshot_for_target = "No hay ninguna foto guardada de {target}. Corre `discoclaro scan {target}` primero."
+integrity_failed = "No se pidió el permiso de administrador: lo instalado no coincide con lo esperado ({target}). Reinstala discoclaro y vuelve a intentarlo."
+unsafe_data_location = "No se escribió nada: {target} es un enlace o tiene más de un nombre, así que no es seguro escribir ahí. Revísalo a mano."

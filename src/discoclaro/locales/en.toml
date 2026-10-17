@@ -47,6 +47,7 @@ shown = "Showing {shown} of {total} folders stored."
 [admin]
 announce = "Administrator permission will be requested to scan {target} in read-only mode. Windows will show its own permission window."
 command = "Command Windows will receive: {command}"
+writable_warning = "Notice: the folder where discoclaro is installed ({directory}) can be written to by your user. This is normal for a development install or a virtual environment; it should not happen on a protected install."
 
 [errors]
 not_fixed_disk = "Only fixed disks can be scanned and this path is not on one: {target}"
@@ -61,3 +62,5 @@ unexpected = "An unexpected error happened in the administrator scan: {target}"
 report_not_fixed_disk = "This path is not on a fixed disk, so no snapshot could be looked up for it: {target}"
 report_no_snapshots = "There is no snapshot saved yet. Run `discoclaro scan <disk>` first."
 report_no_snapshot_for_target = "There is no snapshot saved of {target}. Run `discoclaro scan {target}` first."
+integrity_failed = "The administrator permission was not requested: what is installed does not match what is expected ({target}). Reinstall discoclaro and try again."
+unsafe_data_location = "Nothing was written: {target} is a link or has more than one name, so it is not safe to write there. Check it by hand."

@@ -36,6 +36,10 @@ class ElevationDeclined(OSError):
     """El usuario rechazó la ventana de permisos de Windows (UAC)."""
 
 
+class UnsafeDataLocation(OSError):
+    """La carpeta o el archivo no es seguro para escribir: enlace o varios nombres."""
+
+
 class _ShellExecuteInfo(ctypes.Structure):
     """`SHELLEXECUTEINFOW`, la estructura de `ShellExecuteExW`."""
 
@@ -214,3 +218,29 @@ def _kernel32_drive_type() -> Callable[[str], int]:
 def _shell32_is_user_an_admin() -> int:
     """`IsUserAnAdmin` de Windows (solo existe en Windows)."""
     return ctypes.WinDLL("shell32").IsUserAnAdmin()
+
+
+def ensure_safe_to_write(
+    path: str | os.PathLike[str],
+    lstat: Callable[[str | os.PathLike[str]], os.stat_result] = os.lstat,
+) -> None:
+    """Revalida que `path` no sea un enlace ni tenga otro nombre, justo antes de usarlo.
+
+    Se llama justo antes de cada escritura propia de discoclaro (la carpeta de datos,
+    la base y el resultado de la elevación): el tiempo entre comprobar y escribir es la
+    ventana de un ataque de enlaces, así que revalidar antes de cada una es el punto.
+    Si `path` todavía no existe no hay nada que proteger y no se lanza nada: se creará
+    de cero. Lanza `UnsafeDataLocation` si es un enlace o una *junction* (atributo
+    `FILE_ATTRIBUTE_REPARSE_POINT`), si tiene más de un nombre (`st_nlink > 1`, un
+    enlace duro) o si ni se pudo mirar.
+    """
+    try:
+        info = lstat(path)
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise UnsafeDataLocation(f"could not check before writing: {path!r}") from error
+    if info.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        raise UnsafeDataLocation(f"this is a link or a junction: {path!r}")
+    if info.st_nlink > 1:
+        raise UnsafeDataLocation(f"this has more than one name: {path!r}")

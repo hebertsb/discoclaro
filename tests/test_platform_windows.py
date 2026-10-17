@@ -338,3 +338,77 @@ def test_the_structure_has_the_documented_size_and_the_real_apis_load():
     shell32, kernel32 = windows._load_elevation_apis()
     assert shell32.ShellExecuteExW.argtypes
     assert kernel32.WaitForSingleObject.restype is not None
+
+
+def fake_info(attributes=0, nlink=1):
+    return types.SimpleNamespace(st_file_attributes=attributes, st_nlink=nlink)
+
+
+def test_a_path_that_does_not_exist_yet_has_nothing_to_protect():
+    def lstat(path):
+        raise FileNotFoundError(path)
+
+    windows.ensure_safe_to_write("C:\\nuevo\\x.db", lstat)
+
+
+def test_an_ordinary_file_is_safe_to_write():
+    windows.ensure_safe_to_write("C:\\x.db", lambda path: fake_info())
+
+
+def test_a_reparse_point_is_refused():
+    info = fake_info(attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    with pytest.raises(windows.UnsafeDataLocation):
+        windows.ensure_safe_to_write("C:\\link", lambda path: info)
+
+
+def test_a_file_with_more_than_one_name_is_refused():
+    info = fake_info(nlink=2)
+    with pytest.raises(windows.UnsafeDataLocation):
+        windows.ensure_safe_to_write("C:\\x.db", lambda path: info)
+
+
+def test_not_being_able_to_check_at_all_is_refused():
+    def lstat(path):
+        raise PermissionError(path)
+
+    with pytest.raises(windows.UnsafeDataLocation):
+        windows.ensure_safe_to_write("C:\\x.db", lstat)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="usa archivos reales de Windows")
+def test_a_real_ordinary_file_in_a_tmp_folder_is_safe_to_write(tmp_path):
+    target = tmp_path / "a.db"
+    target.write_bytes(b"x")
+    windows.ensure_safe_to_write(target)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="usa archivos reales de Windows")
+def test_a_real_junction_is_refused(tmp_path):
+    import shutil
+    import subprocess
+
+    real = tmp_path / "real"
+    real.mkdir()
+    junction = tmp_path / "junction"
+    cmd = shutil.which("cmd")
+    assert cmd is not None
+    subprocess.run(  # noqa: S603 - cmd con ruta completa, sin datos externos
+        [cmd, "/c", "mklink", "/J", str(junction), str(real)],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    with pytest.raises(windows.UnsafeDataLocation):
+        windows.ensure_safe_to_write(junction)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="usa archivos reales de Windows")
+def test_a_real_hard_link_is_refused(tmp_path):
+    original = tmp_path / "a.db"
+    original.write_bytes(b"x")
+    second_name = tmp_path / "b.db"
+    os.link(original, second_name)
+    with pytest.raises(windows.UnsafeDataLocation):
+        windows.ensure_safe_to_write(original)
+    with pytest.raises(windows.UnsafeDataLocation):
+        windows.ensure_safe_to_write(second_name)

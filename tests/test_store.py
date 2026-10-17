@@ -1,7 +1,10 @@
 """Pruebas de la base de fotos: siempre sobre archivos en `tmp_path`."""
 
 import dataclasses
+import inspect
+import os
 import sqlite3
+import sys
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -9,6 +12,7 @@ import pytest
 from discoclaro.adapters import store as store_module
 from discoclaro.adapters.store import Store, StoreError
 from discoclaro.domain.models import Node, Snapshot
+from discoclaro.platform import windows
 
 T0 = datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
 
@@ -327,6 +331,39 @@ def test_a_failed_migration_leaves_no_half_built_schema(db_path, monkeypatch):
         Store.open(db_path)
     assert raw_query(db_path, "SELECT name FROM sqlite_master") == []
     assert raw_query(db_path, "PRAGMA user_version") == [(0,)]
+
+
+def test_open_checks_the_folder_and_the_file_before_connecting(db_path):
+    checked = []
+    with Store.open(db_path, ensure_safe=checked.append):
+        pass
+    assert checked == [db_path.parent, db_path]
+
+
+def test_open_refuses_what_ensure_safe_refuses_and_touches_nothing(tmp_path):
+    db_path = tmp_path / "x.db"
+
+    def ensure_safe(path):
+        raise windows.UnsafeDataLocation(f"no: {path}")
+
+    with pytest.raises(windows.UnsafeDataLocation):
+        Store.open(db_path, ensure_safe=ensure_safe)
+    assert not db_path.exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="usa un enlace real de Windows")
+def test_open_refuses_a_real_database_that_is_a_hard_link(tmp_path):
+    other = tmp_path / "other.db"
+    other.write_bytes(b"")
+    db_path = tmp_path / "x.db"
+    os.link(other, db_path)
+    with pytest.raises(windows.UnsafeDataLocation):
+        Store.open(db_path)
+
+
+def test_the_real_check_is_the_default_without_calling_it():
+    parameters = inspect.signature(Store.open).parameters
+    assert parameters["ensure_safe"].default is windows.ensure_safe_to_write
 
 
 def test_a_version_1_database_is_migrated_keeping_its_photos(db_path):

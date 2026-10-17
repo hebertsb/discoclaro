@@ -110,3 +110,12 @@ Si ya hay un malware corriendo con los permisos del usuario, puede intentar disp
 permiso de administrador o modificar archivos del paquete. La verificación de integridad y la
 revalidación suben mucho la dificultad, pero no la vuelven imposible. Por eso la elevación es
 opcional y está apagada mientras no se use.
+
+La verificación de integridad compara los archivos instalados con los hashes que registró el propio
+instalador (`RECORD`); si alguien modifica un archivo y vuelve a calcular su hash en ese mismo
+registro, el cambio pasa sin que se note. En una instalación **editable** (la de desarrollo) no hay
+con qué comparar los archivos fuente, así que esa comprobación no se hace ahí: se avisa de que la
+instalación es editable y, si además la carpeta se puede escribir (lo normal en un entorno virtual
+o una instalación por usuario), se avisa de eso también antes de pedir el permiso, pero no se
+bloquea. El intérprete de Python que ejecuta el proceso elevado tampoco se verifica: queda fuera de
+esta comprobación.
