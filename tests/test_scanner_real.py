@@ -264,6 +264,58 @@ def test_a_file_of_5000_bytes_occupies_whole_blocks_on_disk(tmp_path):
     assert result.scanned_bytes % 512 == 0
 
 
+def make_sparse(path, declared_bytes):
+    """Crea un archivo disperso: declara `declared_bytes` pero casi no ocupa disco.
+
+    Se escribe un byte al final en vez de extender con `truncate`: medido en 300
+    rondas, un archivo extendido así recibía entre 0,5 y 40 MiB según cuándo
+    escribía Windows, y la prueba salía intermitente.
+    """
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    fsctl_set_sparse = 0x000900C4
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.DeviceIoControl.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.LPVOID,
+    ]
+    with open(path, "wb") as f:
+        returned = wintypes.DWORD(0)
+        marked = kernel32.DeviceIoControl(
+            msvcrt.get_osfhandle(f.fileno()),
+            fsctl_set_sparse,
+            None,
+            0,
+            None,
+            0,
+            ctypes.byref(returned),
+            None,
+        )
+        if not marked:
+            pytest.skip("este sistema de archivos no admite archivos dispersos")
+        f.seek(declared_bytes - 1)
+        f.write(b"x")
+
+
+@windows_only
+def test_a_sparse_file_counts_what_it_occupies_not_what_it_declares(tmp_path):
+    declared = 100 * 1024 * 1024
+    make_sparse(tmp_path / "disperso.bin", declared)
+    assert (tmp_path / "disperso.bin").stat().st_size == declared
+    on_disk = scan_tree(str(tmp_path), windows_listing.enumerate_directory)
+    logical = scan_tree(str(tmp_path), enumerate_with_scandir)
+    assert on_disk.scanned_bytes < declared // 100
+    assert logical.scanned_bytes == declared
+
+
 @windows_only
 def test_a_tree_deeper_than_260_characters_is_scanned_completely(tmp_path):
     name = "carpeta_larga_" + "x" * 40
