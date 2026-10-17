@@ -62,6 +62,7 @@ class FakeEntry:
         stat_error=None,
     ):
         self.path = path
+        self.name = path.replace("\\", "/").rsplit("/", 1)[-1]
         self._is_dir = is_dir
         self._size = size
         self._attributes = attributes
@@ -342,3 +343,45 @@ def test_real_symlinks_are_not_followed(tmp_path):
 
 def test_the_real_scandir_is_the_default_without_calling_it():
     assert inspect.signature(scan_tree).parameters["scandir"].default is os.scandir
+
+
+def test_skip_root_files_ignores_those_names_only_at_the_root(tmp_path):
+    make_tree(
+        tmp_path,
+        {
+            "pagefile.sys": 100,
+            "Hiberfil.SYS": 50,
+            "keep.bin": 10,
+            "sub": {"pagefile.sys": 7},
+        },
+    )
+    result = scan_tree(str(tmp_path), skip_root_files=("pagefile.sys", "HIBERFIL.sys"))
+    assert result.scanned_bytes == 17
+    assert result.n_files == 2
+    assert by_path(result)[str(tmp_path / "sub")].size_bytes == 7
+
+
+def test_without_skip_root_files_everything_counts(tmp_path):
+    make_tree(tmp_path, {"pagefile.sys": 100, "keep.bin": 10})
+    result = scan_tree(str(tmp_path))
+    assert (result.scanned_bytes, result.n_files) == (110, 2)
+
+
+def test_a_skipped_name_is_not_measured_nor_counted_as_unreadable_or_link():
+    broken = PermissionError(13, "locked by the system")
+    tree = {
+        "/r": [
+            FakeEntry("/r/pagefile.sys", size=999, stat_error=broken),
+            FakeEntry("/r/a.bin", size=1),
+        ]
+    }
+    result = scan_tree("/r", fake_scandir(tree), skip_root_files=["pagefile.sys"])
+    assert result.scanned_bytes == 1
+    assert result.n_files == 1
+    assert result.unreadable_count == 0
+    assert result.skipped_links == 0
+
+
+def test_skip_root_files_is_keyword_only(tmp_path):
+    with pytest.raises(TypeError):
+        scan_tree(str(tmp_path), os.scandir, ("pagefile.sys",))

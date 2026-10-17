@@ -4,7 +4,7 @@ import dataclasses
 
 import pytest
 
-from discoclaro.domain.models import Node, ScanResult, Unreadable, Volume
+from discoclaro.domain.models import Node, ScanResult, SystemFile, Unreadable, Volume
 
 
 def make_volume(**changes):
@@ -133,3 +133,21 @@ def test_scan_result_counts_must_be_consistent():
 def test_unreadable_keeps_the_path_and_the_error_name():
     item = Unreadable("C:\\locked", "PermissionError")
     assert (item.path, item.reason) == ("C:\\locked", "PermissionError")
+
+
+def test_system_file_keeps_its_data_and_is_immutable():
+    item = SystemFile("D:\\pagefile.sys", 48)
+    assert (item.path, item.size_bytes) == ("D:\\pagefile.sys", 48)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        item.size_bytes = 0
+
+
+def test_system_file_rejects_an_empty_path_and_negative_sizes():
+    with pytest.raises(ValueError):
+        SystemFile("", 1)
+    with pytest.raises(ValueError):
+        SystemFile("D:\\pagefile.sys", -1)
+
+
+def test_a_system_file_of_zero_bytes_is_valid():
+    assert SystemFile("C:\\swapfile.sys", 0).size_bytes == 0

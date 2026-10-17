@@ -86,3 +86,17 @@ class ScanResult:
     def n_files(self) -> int:
         """Archivos de todo el árbol (el total de la raíz)."""
         return self.nodes[-1].n_files
+
+
+@dataclass(frozen=True, slots=True)
+class SystemFile:
+    """Un archivo de sistema grande (como `pagefile.sys`) medido aparte."""
+
+    path: str
+    size_bytes: int
+
+    def __post_init__(self) -> None:
+        if not self.path:
+            raise ValueError("a system file needs a path")
+        if self.size_bytes < 0:
+            raise ValueError("system file size cannot be negative")

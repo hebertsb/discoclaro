@@ -11,7 +11,7 @@ enlaces duros se cuentan una vez por enlace.
 
 import os
 import stat
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 
@@ -44,6 +44,7 @@ class _Frame:
 class _Tally:
     """Lo que se va acumulando durante el recorrido."""
 
+    skip_root_names: frozenset[str] = frozenset()
     nodes: list[Node] = field(default_factory=list)
     unreadable: list[Unreadable] = field(default_factory=list)
     unreadable_count: int = 0
@@ -56,14 +57,24 @@ class _Tally:
             self.unreadable.append(Unreadable(path, type(error).__name__))
 
 
-def scan_tree(root: str, scandir: Scandir = os.scandir) -> ScanResult:
+def scan_tree(
+    root: str,
+    scandir: Scandir = os.scandir,
+    *,
+    skip_root_files: Collection[str] = (),
+) -> ScanResult:
     """Mide `root` y todo lo que cuelga de él.
 
     Lanza `FileNotFoundError` o `NotADirectoryError` si `root` no es una carpeta
     existente. Cualquier otro error del sistema, en la raíz o más adentro, se cuenta
     como ruta ilegible y el recorrido sigue. `scandir` se puede inyectar para probar.
+
+    `skip_root_files` son nombres (sin distinguir mayúsculas) que se omiten solo en la
+    raíz del recorrido y no suman ni bytes ni archivos. Sirve para los archivos de
+    sistema de un volumen, que se miden aparte; un archivo con ese nombre en una
+    subcarpeta sí cuenta.
     """
-    tally = _Tally()
+    tally = _Tally(skip_root_names=frozenset(name.lower() for name in skip_root_files))
     stack = [_open(_Frame(root, None, 0), scandir, tally)]
     while stack:
         frame = stack[-1]
@@ -111,6 +122,12 @@ def _open(frame: _Frame, scandir: Scandir, tally: _Tally) -> _Frame:
 def _visit(entry: os.DirEntry[str], frame: _Frame, tally: _Tally) -> None:
     """Suma un archivo, anota una subcarpeta por visitar u omite un enlace."""
     try:
+        if (
+            tally.skip_root_names
+            and frame.depth == 0
+            and entry.name.lower() in tally.skip_root_names
+        ):
+            return
         if entry.is_symlink():
             tally.skipped_links += 1
             return
