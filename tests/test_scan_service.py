@@ -45,7 +45,7 @@ class FakeScanner:
         return self.result
 
 
-def make_result(nodes=None, unreadable_count=0, skipped_links=0):
+def make_result(nodes=None, unreadable_count=0, skipped_links=0, duplicate_bytes=0):
     nodes = nodes or [Node("C:\\", None, 350, 7, 0)]
     return ScanResult(
         root=nodes[-1].path,
@@ -53,6 +53,7 @@ def make_result(nodes=None, unreadable_count=0, skipped_links=0):
         unreadable_count=unreadable_count,
         unreadable=(),
         skipped_links=skipped_links,
+        duplicate_bytes=duplicate_bytes,
     )
 
 
@@ -270,6 +271,17 @@ def test_the_system_files_are_not_counted_as_unexplained(store):
     summary = run("C:", store, system_files=system_files)
     assert summary.unexplained == Unexplained(
         size_bytes=10, percent_of_used=2.5, exceeds_threshold=False
+    )
+
+
+def test_hard_link_duplicates_reach_the_snapshot_and_count_against_what_was_scanned(
+    store,
+):
+    summary = run("C:", store, FakeScanner(make_result(duplicate_bytes=100)))
+    assert summary.snapshot.duplicate_bytes == 100
+    assert store.get_snapshot(summary.snapshot.id).duplicate_bytes == 100
+    assert summary.unexplained == Unexplained(
+        size_bytes=150, percent_of_used=37.5, exceeds_threshold=True
     )
 
 

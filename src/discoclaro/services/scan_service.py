@@ -145,6 +145,7 @@ def scan_target(
         unreadable_count=result.unreadable_count,
         duration_s=duration,
         is_admin=is_admin(),
+        duplicate_bytes=result.duplicate_bytes,
     )
     kept = [node for node in result.nodes if keep(node)]
     snapshot_id = store.save_snapshot(snapshot, kept)

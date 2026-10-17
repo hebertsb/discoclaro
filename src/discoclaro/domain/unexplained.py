@@ -1,9 +1,14 @@
 """Espacio no explicado: lo que el volumen usa y el escaneo no encontró.
 
-`no explicado = usado − escaneado − archivos de sistema`. Los archivos de sistema se
-miden aparte y se restan para que no cuenten como misterio. El resultado puede ser
-negativo: los tamaños son lógicos, así que archivos comprimidos, dispersos o enlaces
-duros pueden hacer que lo escaneado supere lo usado.
+`no explicado = usado − (escaneado − repetidos) − archivos de sistema`.
+
+- Lo escaneado es lo que ocupan los archivos **en disco**, y cada carpeta cuenta su
+  contenido entero, enlaces duros incluidos. Por eso se descuentan los `repetidos`: el
+  mismo contenido con otro nombre ocupa el disco una sola vez.
+- Los archivos de sistema se miden aparte y se restan para que no cuenten como misterio.
+
+El resultado puede ser negativo (lo escaneado supera lo usado): por ejemplo, si algo
+cambió en el disco durante el recorrido.
 """
 
 from dataclasses import dataclass
@@ -27,17 +32,23 @@ def compute_unexplained(
     scanned_bytes: int,
     system_files_bytes: int,
     threshold_percent: float = DEFAULT_THRESHOLD_PERCENT,
+    *,
+    duplicate_bytes: int = 0,
 ) -> Unexplained:
     """Calcula el espacio no explicado.
 
-    Hay que avisar (`exceeds_threshold`) cuando sobra espacio y es mayor que
-    `threshold_percent` por ciento de lo usado, sin contar el caso justo en el límite.
+    `duplicate_bytes` es lo que ocupan de más los enlaces duros dentro de
+    `scanned_bytes`. Hay que avisar (`exceeds_threshold`) cuando sobra espacio y es
+    mayor que `threshold_percent` por ciento de lo usado, sin contar el caso justo en el
+    límite.
     """
-    if min(used_bytes, scanned_bytes, system_files_bytes) < 0:
+    if min(used_bytes, scanned_bytes, system_files_bytes, duplicate_bytes) < 0:
         raise ValueError("sizes cannot be negative")
+    if duplicate_bytes > scanned_bytes:
+        raise ValueError("duplicate bytes cannot exceed the scanned bytes")
     if threshold_percent < 0:
         raise ValueError("threshold cannot be negative")
-    size = used_bytes - scanned_bytes - system_files_bytes
+    size = used_bytes - (scanned_bytes - duplicate_bytes) - system_files_bytes
     percent = 100 * size / used_bytes if used_bytes else 0.0
     return Unexplained(
         size_bytes=size,
@@ -61,4 +72,5 @@ def unexplained_of(
         snapshot.scanned_bytes,
         snapshot.system_files_bytes,
         threshold_percent,
+        duplicate_bytes=snapshot.duplicate_bytes,
     )

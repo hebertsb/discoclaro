@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import pytest
 
 from discoclaro.domain.models import (
+    DirectoryEntry,
     Node,
     ScanResult,
     Snapshot,
@@ -235,6 +236,57 @@ def test_a_volume_name_marks_a_full_scan_and_a_path_a_partial_one(
     volume, is_volume_scan
 ):
     assert make_snapshot(volume=volume).is_volume_scan is is_volume_scan
+
+
+def test_snapshot_duplicate_bytes_default_to_zero_and_keep_their_value():
+    assert make_snapshot().duplicate_bytes == 0
+    assert make_snapshot(duplicate_bytes=40).duplicate_bytes == 40
+
+
+def test_snapshot_duplicates_cannot_be_negative_or_exceed_what_was_scanned():
+    with pytest.raises(ValueError):
+        make_snapshot(duplicate_bytes=-1)
+    with pytest.raises(ValueError):
+        make_snapshot(scanned_bytes=350, duplicate_bytes=351)
+    assert make_snapshot(scanned_bytes=350, duplicate_bytes=350).duplicate_bytes == 350
+
+
+def test_scan_result_duplicates_default_to_zero_and_keep_their_value():
+    assert make_result().duplicate_bytes == 0
+    assert make_result(duplicate_bytes=250).duplicate_bytes == 250
+
+
+@pytest.mark.parametrize("duplicate_bytes", [-1, 251])
+def test_scan_result_duplicates_must_fit_inside_the_root_size(duplicate_bytes):
+    with pytest.raises(ValueError):
+        make_result(duplicate_bytes=duplicate_bytes)
+
+
+def test_directory_entry_keeps_its_data_and_is_immutable():
+    entry = DirectoryEntry("a.txt", "C:\\a.txt", "file", 4096, b"\x01" * 16)
+    assert (entry.name, entry.path, entry.kind) == ("a.txt", "C:\\a.txt", "file")
+    assert entry.size_bytes == 4096
+    assert entry.file_id == b"\x01" * 16
+    assert entry.error is None
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        entry.size_bytes = 0
+
+
+def test_a_directory_entry_needs_only_a_name_a_path_and_a_kind():
+    entry = DirectoryEntry("Windows", "C:\\Windows", "folder")
+    assert (entry.size_bytes, entry.file_id, entry.error) == (0, None, None)
+
+
+@pytest.mark.parametrize("kind", ["file", "folder", "link", "other", "unreadable"])
+def test_every_known_kind_is_accepted(kind):
+    assert DirectoryEntry("x", "C:\\x", kind).kind == kind
+
+
+def test_an_unknown_kind_or_a_negative_size_is_rejected():
+    with pytest.raises(ValueError):
+        DirectoryEntry("x", "C:\\x", "symlink")
+    with pytest.raises(ValueError):
+        DirectoryEntry("x", "C:\\x", "file", -1)
 
 
 def test_snapshot_arguments_must_be_named():

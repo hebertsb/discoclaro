@@ -63,13 +63,23 @@ MIGRATIONS = (
             "PRAGMA user_version = 1",
         ),
     ),
+    (
+        2,
+        (
+            # Bytes que ocupan de más los enlaces duros dentro de `scanned_bytes`.
+            "ALTER TABLE snapshots ADD COLUMN duplicate_bytes INTEGER NOT NULL "
+            "DEFAULT 0 CHECK (duplicate_bytes >= 0)",
+            "PRAGMA user_version = 2",
+        ),
+    ),
 )
 
 _INSERT_SNAPSHOT = """
     INSERT INTO snapshots (
         taken_at, volume, total_bytes, used_bytes, free_bytes, scanned_bytes,
-        system_files_bytes, unreadable_bytes, unreadable_count, duration_s, is_admin
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        system_files_bytes, unreadable_bytes, unreadable_count, duration_s, is_admin,
+        duplicate_bytes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _INSERT_NODE = """
@@ -80,14 +90,16 @@ _INSERT_NODE = """
 
 _SELECT_ALL_SNAPSHOTS = """
     SELECT id, taken_at, volume, total_bytes, used_bytes, free_bytes, scanned_bytes,
-           system_files_bytes, unreadable_bytes, unreadable_count, duration_s, is_admin
+           system_files_bytes, unreadable_bytes, unreadable_count, duration_s, is_admin,
+           duplicate_bytes
     FROM snapshots
     ORDER BY taken_at DESC, id DESC
 """
 
 _SELECT_SNAPSHOTS_OF_VOLUME = """
     SELECT id, taken_at, volume, total_bytes, used_bytes, free_bytes, scanned_bytes,
-           system_files_bytes, unreadable_bytes, unreadable_count, duration_s, is_admin
+           system_files_bytes, unreadable_bytes, unreadable_count, duration_s, is_admin,
+           duplicate_bytes
     FROM snapshots
     WHERE volume = ?
     ORDER BY taken_at DESC, id DESC
@@ -95,7 +107,8 @@ _SELECT_SNAPSHOTS_OF_VOLUME = """
 
 _SELECT_ONE_SNAPSHOT = """
     SELECT id, taken_at, volume, total_bytes, used_bytes, free_bytes, scanned_bytes,
-           system_files_bytes, unreadable_bytes, unreadable_count, duration_s, is_admin
+           system_files_bytes, unreadable_bytes, unreadable_count, duration_s, is_admin,
+           duplicate_bytes
     FROM snapshots
     WHERE id = ?
 """
@@ -257,6 +270,7 @@ def _snapshot_params(snapshot: Snapshot) -> tuple[object, ...]:
         snapshot.unreadable_count,
         snapshot.duration_s,
         int(snapshot.is_admin),
+        snapshot.duplicate_bytes,
     )
 
 
@@ -286,6 +300,7 @@ def _snapshot_from_row(row: tuple[object, ...]) -> Snapshot:
         unreadable_count,
         duration_s,
         is_admin,
+        duplicate_bytes,
     ) = row
     return Snapshot(
         id=snapshot_id,
@@ -300,6 +315,7 @@ def _snapshot_from_row(row: tuple[object, ...]) -> Snapshot:
         unreadable_count=unreadable_count,
         duration_s=duration_s,
         is_admin=bool(is_admin),
+        duplicate_bytes=duplicate_bytes,
     )
 
 

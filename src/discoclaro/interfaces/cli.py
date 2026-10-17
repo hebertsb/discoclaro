@@ -123,6 +123,8 @@ def _summary_lines(summary: ScanSummary) -> list[str]:
             free=_size(snapshot.free_bytes),
         ),
     ]
+    if snapshot.duplicate_bytes > 0:
+        lines.append(t("scan.duplicates", size=_size(snapshot.duplicate_bytes)))
     if snapshot.system_files_bytes > 0:
         lines.append(t("scan.system_files", size=_size(snapshot.system_files_bytes)))
     if snapshot.unreadable_count:

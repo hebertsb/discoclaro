@@ -72,6 +72,36 @@ def test_the_threshold_can_be_changed():
     assert compute_unexplained(1000, 1000, 0, 0).exceeds_threshold is False
 
 
+def test_hard_link_duplicates_are_taken_out_of_what_was_scanned():
+    without = compute_unexplained(1000, 700, 100)
+    with_duplicates = compute_unexplained(1000, 700, 100, duplicate_bytes=150)
+    assert without.size_bytes == 200
+    assert with_duplicates == Unexplained(350, 35.0, True)
+
+
+def test_duplicates_can_turn_a_quiet_result_into_a_warning():
+    assert compute_unexplained(1000, 950, 0).exceeds_threshold is False
+    assert compute_unexplained(1000, 950, 0, duplicate_bytes=100).exceeds_threshold
+
+
+@pytest.mark.parametrize("duplicate_bytes", [-1, 701])
+def test_impossible_duplicates_are_rejected(duplicate_bytes):
+    with pytest.raises(ValueError):
+        compute_unexplained(1000, 700, 100, duplicate_bytes=duplicate_bytes)
+
+
+def test_the_measured_full_disk_figures_with_and_without_hard_links():
+    # Ejemplo con cifras redondeadas de una medición real (todo C:, sin administrador).
+    used, system = int(293.42 * GIB), int(6.54 * GIB)
+    scanned, duplicates = int(268.28 * GIB), int(21.31 * GIB)
+    old = compute_unexplained(used, scanned, system)
+    new = compute_unexplained(used, scanned, system, duplicate_bytes=duplicates)
+    assert round(old.size_bytes / GIB, 1) == 18.6
+    assert round(new.size_bytes / GIB, 1) == 39.9
+    assert round(new.percent_of_used, 1) == 13.6
+    assert new.exceeds_threshold is True
+
+
 def test_the_figures_measured_on_a_real_disk_would_warn():
     # Ejemplo con las cifras redondeadas de una medición real, sin administrador.
     result = compute_unexplained(int(291.62 * GIB), int(267.14 * GIB), int(6.54 * GIB))

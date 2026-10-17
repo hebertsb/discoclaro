@@ -73,7 +73,7 @@ def count(store, table):
 
 def test_open_creates_the_schema_with_wal_and_foreign_keys(store):
     connection = store._connection
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
     assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     tables = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -106,7 +106,7 @@ def test_open_accepts_text_and_path_and_does_not_create_folders(tmp_path):
 
 
 def test_a_snapshot_and_its_folders_roundtrip(store):
-    snapshot, nodes = make_snapshot(), make_nodes()
+    snapshot, nodes = make_snapshot(duplicate_bytes=45), make_nodes()
     snapshot_id = store.save_snapshot(snapshot, nodes)
     assert snapshot_id == 1
     assert store.get_snapshot(snapshot_id) == dataclasses.replace(snapshot, id=1)
@@ -327,6 +327,28 @@ def test_a_failed_migration_leaves_no_half_built_schema(db_path, monkeypatch):
         Store.open(db_path)
     assert raw_query(db_path, "SELECT name FROM sqlite_master") == []
     assert raw_query(db_path, "PRAGMA user_version") == [(0,)]
+
+
+def test_a_version_1_database_is_migrated_keeping_its_photos(db_path):
+    first_version = store_module.MIGRATIONS[0]
+    connection = sqlite3.connect(db_path)
+    for statement in first_version[1]:
+        connection.execute(statement)
+    connection.execute(
+        "INSERT INTO snapshots (taken_at, volume, total_bytes, used_bytes, free_bytes, "
+        "scanned_bytes, system_files_bytes, unreadable_bytes, unreadable_count, "
+        "duration_s, is_admin) VALUES ('2026-10-17T12:00:00.000000+00:00', 'C:', "
+        "1000, 400, 600, 300, 40, 0, 2, 5.0, 0)"
+    )
+    connection.commit()
+    connection.close()
+    assert raw_query(db_path, "PRAGMA user_version") == [(1,)]
+    with Store.open(db_path) as store:
+        (old,) = store.snapshots()
+        assert (old.id, old.scanned_bytes, old.duplicate_bytes) == (1, 300, 0)
+        store.save_snapshot(make_snapshot(duplicate_bytes=50), [])
+        assert store.snapshots("C:")[0].duplicate_bytes == 50
+    assert raw_query(db_path, "PRAGMA user_version") == [(2,)]
 
 
 def test_migrations_are_applied_one_version_at_a_time(db_path, monkeypatch):

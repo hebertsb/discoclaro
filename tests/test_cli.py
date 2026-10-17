@@ -151,6 +151,42 @@ def test_scan_prints_the_summary_in_english(monkeypatch, capsys):
     ]
 
 
+def with_duplicates(gib):
+    base = make_summary()
+    snapshot = dataclasses.replace(base.snapshot, duplicate_bytes=int(gib * GIB))
+    return dataclasses.replace(base, snapshot=snapshot)
+
+
+def test_hard_link_duplicates_get_their_own_line_after_the_space_line(
+    monkeypatch, capsys
+):
+    fake_run_scan(monkeypatch, with_duplicates(21.5))
+    assert main(["scan", "C:"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[2].startswith("Escaneado:")
+    assert lines[3] == (
+        "Enlaces duros (el mismo contenido con otro nombre): 21,5 GiB; "
+        "cada carpeta los cuenta enteros y el total del disco, una sola vez."
+    )
+    assert lines[4].startswith("Archivos de sistema")
+
+
+def test_the_hard_link_line_is_translated(monkeypatch, capsys):
+    i18n.set_language("en")
+    fake_run_scan(monkeypatch, with_duplicates(21.5))
+    assert main(["scan", "C:"]) == 0
+    assert capsys.readouterr().out.splitlines()[3] == (
+        "Hard links (the same content under another name): 21.5 GiB; "
+        "each folder counts them in full and the disk total only once."
+    )
+
+
+def test_there_is_no_hard_link_line_when_there_are_none(monkeypatch, capsys):
+    fake_run_scan(monkeypatch, make_summary())
+    assert main(["scan", "C:"]) == 0
+    assert "Enlaces duros" not in capsys.readouterr().out
+
+
 def big_unexplained():
     return compute_unexplained(300 * GIB, 250 * GIB, int(6.5 * GIB))
 
