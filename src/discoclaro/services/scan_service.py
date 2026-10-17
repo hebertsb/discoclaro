@@ -24,6 +24,11 @@ from discoclaro.adapters.scanner import scan_tree
 from discoclaro.adapters.store import Store, StoreError
 from discoclaro.adapters.volumes import list_volumes
 from discoclaro.domain.models import Node, ScanResult, Snapshot, SystemFile, Volume
+from discoclaro.domain.unexplained import (
+    DEFAULT_THRESHOLD_PERCENT,
+    Unexplained,
+    unexplained_of,
+)
 from discoclaro.platform import windows
 
 # Control de tamaño de la base (sección 5.3 del plan): solo se guardan las carpetas de
@@ -56,6 +61,7 @@ class ScanSummary:
     skipped_links: int
     system_files: tuple[SystemFile, ...]
     nodes_saved: int
+    unexplained: Unexplained | None
 
 
 def keep_node(node: Node) -> bool:
@@ -99,6 +105,7 @@ def scan_target(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     monotonic: Callable[[], float] = time.monotonic,
     keep: Callable[[Node], bool] = keep_node,
+    threshold_percent: float = DEFAULT_THRESHOLD_PERCENT,
 ) -> ScanSummary:
     """Escanea `target`, guarda la foto en `store` y devuelve el resumen.
 
@@ -141,15 +148,17 @@ def scan_target(
     )
     kept = [node for node in result.nodes if keep(node)]
     snapshot_id = store.save_snapshot(snapshot, kept)
+    saved = dataclasses.replace(snapshot, id=snapshot_id)
     return ScanSummary(
         target=path,
         is_volume=is_volume,
-        snapshot=dataclasses.replace(snapshot, id=snapshot_id),
+        snapshot=saved,
         folders=len(result.nodes),
         files=result.n_files,
         skipped_links=result.skipped_links,
         system_files=found,
         nodes_saved=len(kept),
+        unexplained=unexplained_of(saved, threshold_percent),
     )
 
 

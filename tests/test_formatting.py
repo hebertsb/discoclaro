@@ -4,6 +4,7 @@ import pytest
 
 from discoclaro.domain.formatting import (
     format_bytes,
+    format_decimal,
     format_duration,
     format_int,
     safe_text,
@@ -45,6 +46,21 @@ def test_format_bytes_uses_the_decimal_separator_it_is_given():
 def test_format_bytes_rejects_negative_sizes():
     with pytest.raises(ValueError):
         format_bytes(-1)
+
+
+@pytest.mark.parametrize(
+    ("value", "decimal", "places", "expected"),
+    [
+        (6.152, ".", 1, "6.2"),
+        (6.152, ",", 1, "6,2"),
+        (0, ".", 1, "0.0"),
+        (100, ",", 0, "100"),
+        (1 / 3, ",", 3, "0,333"),
+        (-2.55, ".", 1, "-2.5"),
+    ],
+)
+def test_format_decimal(value, decimal, places, expected):
+    assert format_decimal(value, decimal, places) == expected
 
 
 @pytest.mark.parametrize(

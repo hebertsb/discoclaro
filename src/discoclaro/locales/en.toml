@@ -24,6 +24,9 @@ space_volume = "Scanned: {scanned} of {used} used (volume of {total}, {free} fre
 space_folder = "Scanned: {scanned} (the volume uses {used} of {total} and has {free} free)."
 system_files = "System files, measured separately: {size}"
 unreadable = "Paths without access: {count}"
+unexplained = "Unexplained: {size} ({percent}% of used)."
+unexplained_warning = "Warning: {size} could not be explained. Some folders may only be readable by an administrator: open a terminal as administrator and scan again."
+unexplained_warning_admin = "Warning: even with administrator permissions {size} could not be explained. It may be file system space, such as metadata or volume copies."
 saved = "Snapshot saved: no. {id} ({nodes} folders stored)."
 
 [errors]

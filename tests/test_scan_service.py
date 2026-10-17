@@ -11,6 +11,7 @@ from discoclaro.adapters.scanner import scan_tree
 from discoclaro.adapters.store import Store
 from discoclaro.adapters.volumes import list_volumes
 from discoclaro.domain.models import Node, ScanResult, SystemFile, Volume
+from discoclaro.domain.unexplained import Unexplained
 from discoclaro.platform import windows
 from discoclaro.services import scan_service
 from discoclaro.services.scan_service import (
@@ -253,6 +254,34 @@ def test_the_start_time_and_the_duration_come_from_the_injected_clocks(store):
 def test_the_admin_flag_is_what_the_system_says(store, admin):
     summary = run("C:", store, is_admin=lambda: admin)
     assert summary.snapshot.is_admin is admin
+
+
+def test_a_volume_scan_reports_its_unexplained_space(store):
+    summary = run("C:", store)
+    assert summary.unexplained == Unexplained(
+        size_bytes=50, percent_of_used=12.5, exceeds_threshold=True
+    )
+
+
+def test_the_system_files_are_not_counted_as_unexplained(store):
+    def system_files(root):
+        return [SystemFile("C:\\hiberfil.sys", 40)]
+
+    summary = run("C:", store, system_files=system_files)
+    assert summary.unexplained == Unexplained(
+        size_bytes=10, percent_of_used=2.5, exceeds_threshold=False
+    )
+
+
+def test_the_unexplained_threshold_can_be_changed(store):
+    summary = run("C:", store, threshold_percent=20.0)
+    assert summary.unexplained.size_bytes == 50
+    assert summary.unexplained.exceeds_threshold is False
+
+
+def test_a_partial_scan_has_no_unexplained_space(store):
+    scanner = FakeScanner(make_result([Node("D:\\data", None, 10, 1, 0)]))
+    assert run("D:\\data", store, scanner).unexplained is None
 
 
 def test_counts_and_unreadable_paths_reach_the_summary_and_the_snapshot(store):

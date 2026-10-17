@@ -1,5 +1,6 @@
 """Pruebas de la CLI. El servicio de escaneo se reemplaza por uno falso."""
 
+import dataclasses
 import importlib
 import io
 import tomllib
@@ -11,6 +12,7 @@ import pytest
 
 from discoclaro import __version__, i18n
 from discoclaro.domain.models import Snapshot, SystemFile
+from discoclaro.domain.unexplained import compute_unexplained
 from discoclaro.i18n import t
 from discoclaro.interfaces import cli
 from discoclaro.interfaces.cli import COMMANDS, main
@@ -49,6 +51,7 @@ def make_summary(**changes):
         "skipped_links": 24,
         "system_files": (SystemFile("C:\\hiberfil.sys", int(6.5 * GIB)),),
         "nodes_saved": 4321,
+        "unexplained": compute_unexplained(300 * GIB, 290 * GIB, int(6.5 * GIB)),
     }
     return ScanSummary(**{**fields, **changes})
 
@@ -128,6 +131,7 @@ def test_scan_prints_the_summary_in_spanish(monkeypatch, capsys):
         "(volumen de 500,0 GiB, 200,0 GiB libres).",
         "Archivos de sistema, medidos aparte: 6,5 GiB",
         "Rutas sin acceso: 1.842",
+        "Sin explicar: 3,5 GiB (1,2 % de lo usado).",
         "Foto guardada: n.º 7 (4.321 carpetas guardadas).",
     ]
 
@@ -142,8 +146,66 @@ def test_scan_prints_the_summary_in_english(monkeypatch, capsys):
         "Scanned: 290.0 GiB of 300.0 GiB used (volume of 500.0 GiB, 200.0 GiB free).",
         "System files, measured separately: 6.5 GiB",
         "Paths without access: 1,842",
+        "Unexplained: 3.5 GiB (1.2% of used).",
         "Snapshot saved: no. 7 (4,321 folders stored).",
     ]
+
+
+def big_unexplained():
+    return compute_unexplained(300 * GIB, 250 * GIB, int(6.5 * GIB))
+
+
+def test_a_big_unexplained_space_adds_the_warning_to_open_an_administrator_terminal(
+    monkeypatch, capsys
+):
+    fake_run_scan(monkeypatch, make_summary(unexplained=big_unexplained()))
+    assert main(["scan", "C:"]) == 0
+    assert capsys.readouterr().out.splitlines()[-3:] == [
+        "Sin explicar: 43,5 GiB (14,5 % de lo usado).",
+        "Atención: no se pudo explicar 43,5 GiB. Puede haber carpetas que solo un "
+        "administrador puede abrir: abre una terminal como administrador y vuelve "
+        "a escanear.",
+        "Foto guardada: n.º 7 (4.321 carpetas guardadas).",
+    ]
+
+
+def test_the_warning_is_translated(monkeypatch, capsys):
+    i18n.set_language("en")
+    fake_run_scan(monkeypatch, make_summary(unexplained=big_unexplained()))
+    assert main(["scan", "C:"]) == 0
+    assert capsys.readouterr().out.splitlines()[-3:-1] == [
+        "Unexplained: 43.5 GiB (14.5% of used).",
+        "Warning: 43.5 GiB could not be explained. Some folders may only be readable "
+        "by an administrator: open a terminal as administrator and scan again.",
+    ]
+
+
+def test_if_it_was_already_scanned_as_administrator_the_warning_says_so(
+    monkeypatch, capsys
+):
+    base = make_summary(unexplained=big_unexplained())
+    summary = dataclasses.replace(
+        base, snapshot=dataclasses.replace(base.snapshot, is_admin=True)
+    )
+    fake_run_scan(monkeypatch, summary)
+    assert main(["scan", "C:"]) == 0
+    assert capsys.readouterr().out.splitlines()[-2] == (
+        "Atención: aun con permisos de administrador no se pudo explicar 43,5 GiB. "
+        "Puede ser espacio propio del sistema de archivos, como metadatos o copias "
+        "de volumen."
+    )
+
+
+@pytest.mark.parametrize("scanned_gib", [293.5, 310])
+def test_nothing_is_said_when_no_space_is_left_unexplained(
+    monkeypatch, capsys, scanned_gib
+):
+    unexplained = compute_unexplained(300 * GIB, int(scanned_gib * GIB), int(6.5 * GIB))
+    fake_run_scan(monkeypatch, make_summary(unexplained=unexplained))
+    assert main(["scan", "C:"]) == 0
+    shown = capsys.readouterr().out
+    assert "Sin explicar" not in shown
+    assert "Atención" not in shown
 
 
 def test_a_folder_summary_uses_the_folder_wording_and_omits_empty_lines(
@@ -164,6 +226,7 @@ def test_a_folder_summary_uses_the_folder_wording_and_omits_empty_lines(
         snapshot=folder_snapshot,
         system_files=(),
         skipped_links=0,
+        unexplained=None,
     )
     fake_run_scan(monkeypatch, summary)
     assert main(["scan", "D:\\data"]) == 0

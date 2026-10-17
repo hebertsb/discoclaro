@@ -141,3 +141,9 @@ class Snapshot:
         )
         if min(numbers) < 0:
             raise ValueError("snapshot sizes, counts and duration cannot be negative")
+
+    @property
+    def is_volume_scan(self) -> bool:
+        """Si es de un volumen completo (se guarda por su nombre, `C:`) y no de una
+        carpeta (se guarda por su ruta)."""
+        return "\\" not in self.volume and "/" not in self.volume

@@ -24,6 +24,9 @@ space_volume = "Escaneado: {scanned} de {used} usados (volumen de {total}, {free
 space_folder = "Escaneado: {scanned} (el volumen usa {used} de {total} y tiene {free} libres)."
 system_files = "Archivos de sistema, medidos aparte: {size}"
 unreadable = "Rutas sin acceso: {count}"
+unexplained = "Sin explicar: {size} ({percent} % de lo usado)."
+unexplained_warning = "Atención: no se pudo explicar {size}. Puede haber carpetas que solo un administrador puede abrir: abre una terminal como administrador y vuelve a escanear."
+unexplained_warning_admin = "Atención: aun con permisos de administrador no se pudo explicar {size}. Puede ser espacio propio del sistema de archivos, como metadatos o copias de volumen."
 saved = "Foto guardada: n.º {id} ({nodes} carpetas guardadas)."
 
 [errors]

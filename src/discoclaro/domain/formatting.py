@@ -28,6 +28,11 @@ def format_bytes(size: int, decimal: str = ".") -> str:
     return f"{value:.1f}".replace(".", decimal) + f" {_UNITS[unit]}"
 
 
+def format_decimal(value: float, decimal: str = ".", places: int = 1) -> str:
+    """Número con decimales fijos y el separador dado: `6.2` o `6,2`."""
+    return f"{value:.{places}f}".replace(".", decimal)
+
+
 def format_int(value: int, thousands: str = ",") -> str:
     """Entero con separador de miles: `1203998` pasa a `1,203,998`."""
     return f"{value:,}".replace(",", thousands)

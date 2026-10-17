@@ -221,6 +221,22 @@ def test_snapshot_rejects_negative_numbers(field):
         make_snapshot(**{field: -1})
 
 
+@pytest.mark.parametrize(
+    ("volume", "is_volume_scan"),
+    [
+        ("C:", True),
+        ("D:", True),
+        ("C:\\Users", False),
+        ("D:\\data\\sub", False),
+        ("D:/data", False),
+    ],
+)
+def test_a_volume_name_marks_a_full_scan_and_a_path_a_partial_one(
+    volume, is_volume_scan
+):
+    assert make_snapshot(volume=volume).is_volume_scan is is_volume_scan
+
+
 def test_snapshot_arguments_must_be_named():
     with pytest.raises(TypeError):
         Snapshot(datetime(2026, 10, 17, tzinfo=UTC), "C:")
