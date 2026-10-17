@@ -444,3 +444,32 @@ def test_pause_requested_drains_every_waiting_key_without_blocking():
 def test_pause_requested_ignores_a_different_key():
     kbhit, getch = fake_keyboard(b"x")
     assert windows.pause_requested(kbhit, getch) is False
+
+
+def test_environment_variables_reads_the_four_known_ones():
+    environ = {
+        "USERPROFILE": "C:\\Users\\x",
+        "LOCALAPPDATA": "C:\\Users\\x\\AppData\\Local",
+        "APPDATA": "C:\\Users\\x\\AppData\\Roaming",
+        "TEMP": "C:\\Users\\x\\AppData\\Local\\Temp",
+        "PATH": "C:\\Windows",
+    }
+    assert windows.environment_variables(environ) == {
+        "%USERPROFILE%": "C:\\Users\\x",
+        "%LOCALAPPDATA%": "C:\\Users\\x\\AppData\\Local",
+        "%APPDATA%": "C:\\Users\\x\\AppData\\Roaming",
+        "%TEMP%": "C:\\Users\\x\\AppData\\Local\\Temp",
+    }
+
+
+def test_environment_variables_omits_what_is_missing():
+    assert windows.environment_variables({"USERPROFILE": "C:\\Users\\x"}) == {
+        "%USERPROFILE%": "C:\\Users\\x"
+    }
+    assert windows.environment_variables({}) == {}
+
+
+def test_environment_variables_reads_the_real_environment_by_default():
+    found = windows.environment_variables()
+    assert isinstance(found, dict)
+    assert all(key in windows.ENVIRONMENT_VARIABLES for key in found)

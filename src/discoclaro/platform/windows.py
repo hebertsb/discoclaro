@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from ctypes import wintypes
 from pathlib import Path
 
+from discoclaro.domain.classify import ENVIRONMENT_VARIABLES
 from discoclaro.domain.models import SystemFile
 
 logger = logging.getLogger(__name__)
@@ -266,3 +267,19 @@ def pause_requested(
         if getch().lower() == PAUSE_KEY:
             pressed = True
     return pressed
+
+
+def environment_variables(environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Los valores reales de las variables que aceptan los patrones de las reglas.
+
+    Da `{"%LOCALAPPDATA%": "C:\\Users\\x\\AppData\\Local", ...}`. Las que falten en
+    el entorno no se incluyen: esas partes del patrón nunca coincidirán con nada
+    (ver `domain/classify.py`), en vez de fallar. `environ` se puede inyectar para
+    probar sin tocar las variables de entorno reales.
+    """
+    environ = os.environ if environ is None else environ
+    return {
+        token: environ[token.strip("%")]
+        for token in ENVIRONMENT_VARIABLES
+        if token.strip("%") in environ
+    }
