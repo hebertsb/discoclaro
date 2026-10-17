@@ -5,6 +5,28 @@
 description = "Explains why your disk is filling up."
 
 [cli.commands]
-scan = "Scans the disks and saves a snapshot (not implemented yet)."
+scan = "Scans a disk or a folder and saves a snapshot."
 report = "Shows a report of what takes up space (not implemented yet)."
 growth = "Compares two snapshots and shows what grew (not implemented yet)."
+
+[cli.scan]
+target_name = "TARGET"
+target_help = "Disk (for example C:) or folder to scan."
+
+[format]
+decimal_separator = "."
+thousands_separator = ","
+
+[scan]
+done = "Scan of {target} finished in {duration}."
+counts = "Folders: {folders} · Files: {files} · Links skipped: {links}"
+space_volume = "Scanned: {scanned} of {used} used (volume of {total}, {free} free)."
+space_folder = "Scanned: {scanned} (the volume uses {used} of {total} and has {free} free)."
+system_files = "System files, measured separately: {size}"
+unreadable = "Paths without access: {count}"
+saved = "Snapshot saved: no. {id} ({nodes} folders stored)."
+
+[errors]
+not_fixed_disk = "Only fixed disks can be scanned and this path is not on one: {target}"
+not_a_folder = "It does not exist or is not a folder: {target}"
+cannot_open_database = "Could not open the discoclaro database: {target}"

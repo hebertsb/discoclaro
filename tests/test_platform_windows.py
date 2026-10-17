@@ -5,6 +5,7 @@ import logging
 import os
 import stat
 import types
+from pathlib import Path
 
 import pytest
 
@@ -149,3 +150,43 @@ def test_the_known_names_are_the_three_system_files_in_lowercase():
 def test_the_real_lstat_is_the_default_without_calling_it():
     parameters = inspect.signature(windows.measure_system_files).parameters
     assert parameters["lstat"].default is os.lstat
+
+
+def test_the_data_folder_is_discoclaro_inside_localappdata():
+    environ = {"LOCALAPPDATA": "R:\\Datos\\Local"}
+    expected = Path("R:\\Datos\\Local") / "discoclaro"
+    assert windows.default_data_dir(environ) == expected
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [
+        {},
+        {"LOCALAPPDATA": ""},
+        {"LOCALAPPDATA": "relativo\\carpeta"},
+        {"LOCALAPPDATA": "\\sin\\unidad"},
+    ],
+)
+def test_the_data_folder_refuses_a_missing_or_relative_localappdata(environ):
+    with pytest.raises(OSError):
+        windows.default_data_dir(environ)
+
+
+def test_the_data_folder_reads_the_real_environment_by_default(monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", "R:\\Otra\\Carpeta")
+    assert windows.default_data_dir() == Path("R:\\Otra\\Carpeta") / "discoclaro"
+
+
+@pytest.mark.parametrize(("answer", "expected"), [(1, True), (0, False), (4, True)])
+def test_is_admin_follows_the_windows_answer(answer, expected):
+    assert windows.is_admin(lambda: answer) is expected
+
+
+@pytest.mark.parametrize(
+    "error", [OSError("no shell32"), AttributeError("not windows")]
+)
+def test_is_admin_assumes_no_when_it_cannot_tell(error):
+    def broken():
+        raise error
+
+    assert windows.is_admin(broken) is False

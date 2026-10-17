@@ -1,7 +1,7 @@
-"""Lo específico de Windows: qué discos tiene el equipo y sus archivos de sistema.
+"""Lo específico de Windows: discos, archivos de sistema, carpeta de datos y permisos.
 
-Aquí irán también la elevación y el Programador de tareas. Todo lo que dependa de
-Windows vive en este módulo, para poder agregar Linux y macOS sin tocar el núcleo.
+Aquí irá también el Programador de tareas. Todo lo que dependa de Windows vive en este
+módulo, para poder agregar Linux y macOS sin tocar el núcleo.
 """
 
 import ctypes
@@ -9,7 +9,8 @@ import logging
 import ntpath
 import os
 import stat
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
 
 from discoclaro.domain.models import SystemFile
 
@@ -19,6 +20,8 @@ DRIVE_FIXED = 3  # valor de GetDriveTypeW para un disco fijo
 
 # Archivos de sistema grandes que cuelgan de la raíz de un volumen.
 SYSTEM_FILE_NAMES = ("pagefile.sys", "hiberfil.sys", "swapfile.sys")
+
+APP_FOLDER = "discoclaro"
 
 
 def fixed_drive_roots(
@@ -66,9 +69,39 @@ def measure_system_files(
     return found
 
 
+def default_data_dir(environ: Mapping[str, str] | None = None) -> Path:
+    """Carpeta de datos propia de discoclaro: `%LOCALAPPDATA%\\discoclaro`.
+
+    Es el único sitio donde discoclaro guarda lo suyo. Lanza `OSError` si
+    `LOCALAPPDATA` falta o no es una ruta absoluta con unidad. `environ` se puede
+    inyectar para probar sin tocar las variables reales.
+    """
+    environ = os.environ if environ is None else environ
+    base = environ.get("LOCALAPPDATA", "")
+    if not base or not ntpath.isabs(base) or not ntpath.splitdrive(base)[0]:
+        raise OSError("LOCALAPPDATA is not set to an absolute path")
+    return Path(base) / APP_FOLDER
+
+
+def is_admin(is_user_an_admin: Callable[[], int] | None = None) -> bool:
+    """Si este proceso tiene permisos de administrador (está elevado).
+
+    Si no se puede saber, se asume que no. La función de Windows se puede inyectar.
+    """
+    try:
+        return bool((is_user_an_admin or _shell32_is_user_an_admin)())
+    except (OSError, AttributeError):
+        return False
+
+
 def _kernel32_drive_type() -> Callable[[str], int]:
     """`GetDriveTypeW` de Windows (solo existe en Windows)."""
     kernel32 = ctypes.WinDLL("kernel32")
     kernel32.GetDriveTypeW.argtypes = [ctypes.c_wchar_p]
     kernel32.GetDriveTypeW.restype = ctypes.c_uint
     return kernel32.GetDriveTypeW
+
+
+def _shell32_is_user_an_admin() -> int:
+    """`IsUserAnAdmin` de Windows (solo existe en Windows)."""
+    return ctypes.WinDLL("shell32").IsUserAnAdmin()

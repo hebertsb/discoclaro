@@ -5,6 +5,28 @@
 description = "Explica por qué se llena tu disco."
 
 [cli.commands]
-scan = "Escanea los discos y guarda una foto (aún sin implementar)."
+scan = "Escanea un disco o una carpeta y guarda una foto."
 report = "Muestra un informe de lo que ocupa espacio (aún sin implementar)."
 growth = "Compara dos fotos y muestra qué creció (aún sin implementar)."
+
+[cli.scan]
+target_name = "DESTINO"
+target_help = "Disco (por ejemplo C:) o carpeta que se escanea."
+
+[format]
+decimal_separator = ","
+thousands_separator = "."
+
+[scan]
+done = "Escaneo de {target} terminado en {duration}."
+counts = "Carpetas: {folders} · Archivos: {files} · Enlaces omitidos: {links}"
+space_volume = "Escaneado: {scanned} de {used} usados (volumen de {total}, {free} libres)."
+space_folder = "Escaneado: {scanned} (el volumen usa {used} de {total} y tiene {free} libres)."
+system_files = "Archivos de sistema, medidos aparte: {size}"
+unreadable = "Rutas sin acceso: {count}"
+saved = "Foto guardada: n.º {id} ({nodes} carpetas guardadas)."
+
+[errors]
+not_fixed_disk = "Solo se pueden escanear discos fijos y esta ruta no está en uno: {target}"
+not_a_folder = "No existe o no es una carpeta: {target}"
+cannot_open_database = "No se pudo abrir la base de datos de discoclaro: {target}"
