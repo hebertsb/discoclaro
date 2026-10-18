@@ -6,7 +6,9 @@ from datetime import UTC, datetime
 import pytest
 
 from discoclaro.domain.models import (
+    LARGE_FILE_MIN_BYTES,
     DirectoryEntry,
+    LargeFile,
     Node,
     ScanResult,
     Snapshot,
@@ -160,6 +162,27 @@ def test_system_file_rejects_an_empty_path_and_negative_sizes():
 
 def test_a_system_file_of_zero_bytes_is_valid():
     assert SystemFile("C:\\swapfile.sys", 0).size_bytes == 0
+
+
+def test_large_file_keeps_its_data_and_is_immutable():
+    item = LargeFile("D:\\models\\model.gguf", LARGE_FILE_MIN_BYTES)
+    assert (item.path, item.size_bytes) == (
+        "D:\\models\\model.gguf",
+        LARGE_FILE_MIN_BYTES,
+    )
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        item.size_bytes = 0
+
+
+def test_large_file_rejects_an_empty_path_and_negative_sizes():
+    with pytest.raises(ValueError):
+        LargeFile("", 1)
+    with pytest.raises(ValueError):
+        LargeFile("D:\\x.bin", -1)
+
+
+def test_a_large_file_of_zero_bytes_is_valid():
+    assert LargeFile("D:\\x.bin", 0).size_bytes == 0
 
 
 def make_snapshot(**changes):

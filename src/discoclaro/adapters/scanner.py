@@ -16,6 +16,11 @@ como el Explorador: así dos fotos son comparables sin depender del orden del re
 Aparte, `duplicate_bytes` suma lo que ocupan de más los enlaces duros (el mismo
 contenido visto otra vez con otro nombre), para que el total del volumen sea exacto.
 
+**Archivos grandes (T2.5):** cada archivo de al menos `large_file_bytes` se guarda
+aparte (ruta y tamaño), para que `growth` pueda nombrar un archivo grande nuevo. No se
+deduplican por enlace duro: un archivo grande con dos nombres sale dos veces, una
+simplificación a propósito (ver el plan).
+
 **Retomar un punto de control (T1.10):** si `resume` trae una carpeta de primer nivel
 (hija directa de `root`) ya medida de antes, no se vuelve a leer: se usa tal cual. Cada
 vez que una carpeta de primer nivel **nueva** termina de medirse, `on_subtree_done` la
@@ -31,7 +36,9 @@ from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 
 from discoclaro.domain.models import (
+    LARGE_FILE_MIN_BYTES,
     DirectoryEntry,
+    LargeFile,
     Node,
     ResumedSubtree,
     ScanProgress,
@@ -110,12 +117,14 @@ class _Tally:
     """Lo que se va acumulando durante el recorrido."""
 
     skip_root_names: frozenset[str] = frozenset()
+    large_file_bytes: int = LARGE_FILE_MIN_BYTES
     nodes: list[Node] = field(default_factory=list)
     unreadable: list[Unreadable] = field(default_factory=list)
     unreadable_count: int = 0
     skipped_links: int = 0
     seen_ids: set[bytes] = field(default_factory=set)
     duplicate_bytes: int = 0
+    large_files: list[LargeFile] = field(default_factory=list)
     # Para el progreso (T1.10): archivos y bytes vistos en total, independiente de
     # cómo se van sumando las carpetas unas dentro de otras.
     files_seen: int = 0
@@ -133,6 +142,7 @@ def scan_tree(
     enumerate_directory: Enumerator | None = None,
     *,
     skip_root_files: Collection[str] = (),
+    large_file_bytes: int = LARGE_FILE_MIN_BYTES,
     on_progress: OnProgress | None = None,
     resume: Mapping[str, ResumedSubtree] | None = None,
     on_subtree_done: OnSubtreeDone | None = None,
@@ -149,23 +159,29 @@ def scan_tree(
     sistema de un volumen, que se miden aparte; un archivo con ese nombre en una
     subcarpeta sí cuenta.
 
-    `on_progress` avisa, cada vez que una carpeta cualquiera termina de medirse,
-    cuánto lleva en total. `resume` y `on_subtree_done` son para retomar un punto de
-    control (T1.10): ver el docstring del módulo.
+    `large_file_bytes` es el tamaño a partir del cual un archivo se guarda aparte
+    (T2.5). `on_progress` avisa, cada vez que una carpeta cualquiera termina de
+    medirse, cuánto lleva en total. `resume` y `on_subtree_done` son para retomar un
+    punto de control (T1.10): ver el docstring del módulo.
     """
     list_entries = enumerate_directory or default_enumerator()
-    tally = _Tally(skip_root_names=frozenset(name.lower() for name in skip_root_files))
+    tally = _Tally(
+        skip_root_names=frozenset(name.lower() for name in skip_root_files),
+        large_file_bytes=large_file_bytes,
+    )
     known = resume or {}
     for reused in known.values():
         tally.nodes.extend(reused.nodes)
         tally.duplicate_bytes += reused.duplicate_bytes
         tally.unreadable_count += reused.unreadable_count
         tally.skipped_links += reused.skipped_links
+        tally.large_files.extend(reused.large_files)
         root_node = reused.nodes[-1]
         tally.files_seen += root_node.n_files
         tally.bytes_seen += root_node.size_bytes
     stack = [_open(_Frame(root, None, 0), list_entries, tally, known)]
     subtree_start = len(tally.nodes)
+    large_files_start = len(tally.large_files)
     marks = (0, 0, 0)  # duplicate_bytes, unreadable_count, skipped_links al empezar
     while stack:
         frame = stack[-1]
@@ -174,6 +190,7 @@ def scan_tree(
             child = _Frame(child_path, frame.path, frame.depth + 1)
             if child.depth == 1:
                 subtree_start = len(tally.nodes)
+                large_files_start = len(tally.large_files)
                 marks = (
                     tally.duplicate_bytes,
                     tally.unreadable_count,
@@ -210,6 +227,7 @@ def scan_tree(
                     duplicate_bytes=tally.duplicate_bytes - marks[0],
                     unreadable_count=tally.unreadable_count - marks[1],
                     skipped_links=tally.skipped_links - marks[2],
+                    large_files=tuple(tally.large_files[large_files_start:]),
                 ),
             )
         if stack:
@@ -222,6 +240,7 @@ def scan_tree(
         unreadable=tuple(tally.unreadable),
         skipped_links=tally.skipped_links,
         duplicate_bytes=tally.duplicate_bytes,
+        large_files=tuple(tally.large_files),
     )
 
 
@@ -268,6 +287,8 @@ def _visit(entry: DirectoryEntry, frame: _Frame, tally: _Tally) -> None:
         frame.size_bytes += entry.size_bytes
         tally.files_seen += 1
         tally.bytes_seen += entry.size_bytes
+        if entry.size_bytes >= tally.large_file_bytes:
+            tally.large_files.append(LargeFile(entry.path, entry.size_bytes))
         if entry.file_id is not None:
             if entry.file_id in tally.seen_ids:
                 tally.duplicate_bytes += entry.size_bytes

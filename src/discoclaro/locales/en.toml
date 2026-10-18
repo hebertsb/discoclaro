@@ -6,8 +6,8 @@ description = "Explains why your disk is filling up."
 
 [cli.commands]
 scan = "Scans a disk or a folder and saves a snapshot."
-report = "Shows a report of what takes up space (not implemented yet)."
-growth = "Compares two snapshots and shows what grew (not implemented yet)."
+report = "Shows a report of what takes up space."
+growth = "Compares two snapshots and shows what grew."
 
 [cli.scan]
 target_name = "TARGET"
@@ -19,6 +19,15 @@ restart_help = "Ignores an earlier checkpoint and starts the scan from zero."
 target_name = "TARGET"
 target_help = "Disk or folder already scanned before (for example C:); if missing, uses the latest snapshot of any of them."
 top_help = "How many folders to show, largest first (20 by default)."
+json_help = "Show the result as JSON instead of a table."
+by_category_help = "Groups by category from the rule catalog instead of showing loose folders."
+
+[cli.growth]
+target_name = "TARGET"
+target_help = "Disk or folder already scanned before (for example C:); if missing, uses the latest snapshot of any of them."
+since_name = "SINCE"
+since_help = "How old the snapshot to compare with must be: a number and d, h or w (for example 7d, 24h, 2w). 7d by default."
+top_help = "How many folders (or categories) to show, from the one that grew the most to the one that shrank the most (20 by default)."
 json_help = "Show the result as JSON instead of a table."
 by_category_help = "Groups by category from the rule catalog instead of showing loose folders."
 
@@ -52,6 +61,19 @@ column_folders = "Folders"
 shown = "Showing {shown} of {total} folders stored."
 shown_categories = "Showing {shown} categories."
 
+[growth]
+title = "Changes in {target} between {before} and {after}."
+column_path = "Folder"
+column_category = "Category"
+column_before = "Before"
+column_after = "Now"
+column_grown = "Difference"
+shown_folders = "Showing {shown} folders."
+shown_categories = "Showing {shown} categories."
+new_files_title = "New large files:"
+column_file = "File"
+column_size = "Size"
+
 [admin]
 announce = "Administrator permission will be requested to scan {target} in read-only mode. Windows will show its own permission window."
 command = "Command Windows will receive: {command}"
@@ -73,3 +95,8 @@ report_no_snapshot_for_target = "There is no snapshot saved of {target}. Run `di
 integrity_failed = "The administrator permission was not requested: what is installed does not match what is expected ({target}). Reinstall discoclaro and try again."
 unsafe_data_location = "Nothing was written: {target} is a link or has more than one name, so it is not safe to write there. Check it by hand."
 scan_cancelled = "Scan cancelled by the user; no snapshot was saved."
+growth_not_fixed_disk = "This path is not on a fixed disk, so no snapshot could be looked up for it: {target}"
+growth_no_snapshots = "There is no snapshot saved yet. Run `discoclaro scan <disk>` first."
+growth_no_snapshot_for_target = "There is no snapshot saved of {target}. Run `discoclaro scan {target}` first."
+growth_invalid_since = "\"{target}\" is not a valid age: a number and d, h or w, for example 7d."
+growth_not_enough_history = "There is no snapshot of {target} old enough to compare with. Wait longer between scans, or try a smaller --since."

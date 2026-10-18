@@ -14,12 +14,14 @@ import pytest
 from discoclaro import __version__, i18n
 from discoclaro.domain.categories import CategoryTotal
 from discoclaro.domain.formatting import format_table
-from discoclaro.domain.models import Node, ScanProgress, Snapshot, SystemFile
+from discoclaro.domain.growth import CategoryGrowth, FolderGrowth
+from discoclaro.domain.models import LargeFile, Node, ScanProgress, Snapshot, SystemFile
 from discoclaro.domain.unexplained import compute_unexplained
 from discoclaro.i18n import t
 from discoclaro.interfaces import cli
 from discoclaro.interfaces.cli import COMMANDS, main
-from discoclaro.services import report_service
+from discoclaro.services import growth_service, report_service
+from discoclaro.services.growth_service import Growth, GrowthError
 from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
 
@@ -80,14 +82,6 @@ def test_version_prints_name_and_version(capsys):
         main(["--version"])
     assert exc.value.code == 0
     assert capsys.readouterr().out.strip() == f"discoclaro {__version__}"
-
-
-@pytest.mark.parametrize("command", ["growth"])
-def test_commands_not_built_yet_exit_cleanly(command, capsys):
-    assert main([command]) == 0
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == ""
 
 
 @pytest.mark.parametrize("argv", [[], ["no-existe"], ["scan"]])
@@ -860,6 +854,227 @@ def test_report_errors_go_to_stderr_with_a_safe_target_and_exit_code_1(
 def test_report_with_no_snapshots_at_all_is_reported(monkeypatch, capsys):
     fake_run_report(monkeypatch, error=ReportError("report_no_snapshots", ""))
     assert main(["report"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "No hay ninguna foto guardada todavía. Corre `discoclaro scan <disco>` "
+        "primero.\n"
+    )
+
+
+def make_growth(**changes):
+    before = Snapshot(
+        taken_at=datetime(2026, 10, 1, 12, 0, tzinfo=UTC),
+        volume="C:",
+        total_bytes=500 * GIB,
+        used_bytes=280 * GIB,
+        free_bytes=220 * GIB,
+        scanned_bytes=270 * GIB,
+        system_files_bytes=0,
+        unreadable_bytes=0,
+        unreadable_count=0,
+        duration_s=60.0,
+        is_admin=False,
+        id=5,
+    )
+    after = dataclasses.replace(
+        before, taken_at=datetime(2026, 10, 17, 8, 0, tzinfo=UTC), id=7
+    )
+    fields = {
+        "before": before,
+        "after": after,
+        "folders": (
+            FolderGrowth(
+                path="C:\\Windows",
+                depth=1,
+                before_bytes=10 * GIB,
+                after_bytes=15 * GIB,
+                is_new=False,
+            ),
+            FolderGrowth(
+                path="C:\\new",
+                depth=1,
+                before_bytes=0,
+                after_bytes=2 * GIB,
+                is_new=True,
+            ),
+        ),
+        "categories": None,
+        "new_large_files": (LargeFile("C:\\model.gguf", 5 * GIB),),
+    }
+    return Growth(**{**fields, **changes})
+
+
+def fake_run_growth(monkeypatch, growth=None, error=None):
+    """Reemplaza el servicio de crecimiento; devuelve (destino, desde, top, categoría)
+    de cada llamada."""
+    calls = []
+
+    def run_growth(
+        target, since, *, top_n=growth_service.DEFAULT_TOP_N, by_category=False
+    ):
+        calls.append((target, since, top_n, by_category))
+        if error:
+            raise error
+        return growth
+
+    monkeypatch.setattr(cli.growth_service, "run_growth", run_growth)
+    return calls
+
+
+def test_growth_help_describes_the_target_and_since_from_the_catalog(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["growth", "--help"])
+    assert exc.value.code == 0
+    shown = " ".join(capsys.readouterr().out.split())
+    assert t("cli.growth.target_name") in shown
+    assert t("cli.growth.target_help") in shown
+    assert "--since" in shown
+    assert t("cli.growth.since_help") in shown
+    assert "--top" in shown
+    assert "--json" in shown
+    assert "--by-category" in shown
+
+
+def test_growth_passes_the_target_and_the_defaults(monkeypatch, capsys):
+    calls = fake_run_growth(monkeypatch, make_growth())
+    assert main(["growth", "C:"]) == 0
+    assert calls == [
+        ("C:", growth_service.DEFAULT_SINCE, growth_service.DEFAULT_TOP_N, False)
+    ]
+    capsys.readouterr()
+
+
+def test_growth_with_no_target_passes_none(monkeypatch, capsys):
+    calls = fake_run_growth(monkeypatch, make_growth())
+    assert main(["growth"]) == 0
+    assert calls[0][0] is None
+    capsys.readouterr()
+
+
+def test_growth_since_top_and_by_category_are_passed_through(monkeypatch, capsys):
+    calls = fake_run_growth(monkeypatch, make_growth())
+    assert main(["growth", "C:", "--since", "30d", "--top", "5", "--by-category"]) == 0
+    assert calls == [("C:", "30d", 5, True)]
+    capsys.readouterr()
+
+
+def test_growth_prints_the_folder_table_and_new_files_in_spanish(monkeypatch, capsys):
+    growth = make_growth()
+    fake_run_growth(monkeypatch, growth)
+    assert main(["growth", "C:"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    before = growth.before.taken_at.astimezone().strftime("%Y-%m-%d %H:%M")
+    after = growth.after.taken_at.astimezone().strftime("%Y-%m-%d %H:%M")
+    assert lines[0] == f"Cambios en C: entre el {before} y el {after}."
+    rows = [
+        ["C:\\Windows", "10,0 GiB", "15,0 GiB", "+5,0 GiB"],
+        ["C:\\new", "0 B", "2,0 GiB", "+2,0 GiB"],
+    ]
+    table = format_table(
+        ["Carpeta", "Antes", "Ahora", "Diferencia"], rows, align=("l", "r", "r", "r")
+    )
+    assert lines[1 : 1 + len(table)] == table
+    rest = lines[1 + len(table) :]
+    assert rest[0] == "Se muestran 2 carpetas."
+    assert rest[1] == "Archivos grandes nuevos:"
+    files_table = format_table(
+        ["Archivo", "Tamaño"], [["C:\\model.gguf", "5,0 GiB"]], align=("l", "r")
+    )
+    assert rest[2:] == files_table
+
+
+def test_growth_prints_the_category_table_when_asked_for(monkeypatch, capsys):
+    growth = make_growth(
+        categories=(
+            CategoryGrowth(category="cache", before_bytes=1 * GIB, after_bytes=3 * GIB),
+        ),
+        new_large_files=(),
+    )
+    fake_run_growth(monkeypatch, growth)
+    assert main(["growth", "C:", "--by-category"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    table = format_table(
+        ["Categoría", "Antes", "Ahora", "Diferencia"],
+        [["cache", "1,0 GiB", "3,0 GiB", "+2,0 GiB"]],
+        align=("l", "r", "r", "r"),
+    )
+    assert lines[1 : 1 + len(table)] == table
+    assert lines[1 + len(table)] == "Se muestran 1 categorías."
+    assert "Archivos grandes nuevos" not in capsys.readouterr().out
+
+
+def test_growth_with_no_new_large_files_omits_that_section(monkeypatch, capsys):
+    growth = make_growth(new_large_files=())
+    fake_run_growth(monkeypatch, growth)
+    assert main(["growth", "C:"]) == 0
+    assert "Archivos grandes nuevos" not in capsys.readouterr().out
+
+
+def test_growth_json_has_the_expected_fields(monkeypatch, capsys):
+    growth = make_growth()
+    fake_run_growth(monkeypatch, growth)
+    assert main(["growth", "C:", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["target"] == "C:"
+    assert data["before_snapshot_id"] == 5
+    assert data["after_snapshot_id"] == 7
+    assert data["folders"][0] == {
+        "path": "C:\\Windows",
+        "depth": 1,
+        "before_bytes": 10 * GIB,
+        "after_bytes": 15 * GIB,
+        "grown_bytes": 5 * GIB,
+        "is_new": False,
+    }
+    assert data["by_category"] is None
+    assert data["new_large_files"] == [
+        {"path": "C:\\model.gguf", "size_bytes": 5 * GIB}
+    ]
+
+
+def test_growth_json_by_category_has_a_by_category_list(monkeypatch, capsys):
+    growth = make_growth(
+        categories=(CategoryGrowth(category="cache", before_bytes=1, after_bytes=3),)
+    )
+    fake_run_growth(monkeypatch, growth)
+    assert main(["growth", "C:", "--by-category", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["by_category"] == [
+        {"category": "cache", "before_bytes": 1, "after_bytes": 3, "grown_bytes": 2}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        (
+            "growth_not_fixed_disk",
+            "Esta ruta no está en un disco fijo, así que no se pudo buscar una foto "
+            "de ella: ",
+        ),
+        ("growth_no_snapshot_for_target", "No hay ninguna foto guardada de "),
+        ("growth_invalid_since", "no es una antigüedad válida"),
+        (
+            "growth_not_enough_history",
+            "No hay ninguna foto de ",
+        ),
+    ],
+)
+def test_growth_errors_go_to_stderr_with_a_safe_target_and_exit_code_1(
+    monkeypatch, capsys, kind, expected
+):
+    fake_run_growth(monkeypatch, error=GrowthError(kind, "D:\\x\x1b[31m\nfalso"))
+    assert main(["growth", "D:\\x"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert expected in captured.err
+    assert "D:\\x?[31m?falso" in captured.err
+
+
+def test_growth_with_no_snapshots_at_all_is_reported(monkeypatch, capsys):
+    fake_run_growth(monkeypatch, error=GrowthError("growth_no_snapshots", ""))
+    assert main(["growth"]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == (

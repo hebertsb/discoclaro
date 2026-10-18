@@ -12,6 +12,7 @@ from discoclaro.adapters.scanner import enumerate_with_scandir, scan_tree
 from discoclaro.adapters.store import Store
 from discoclaro.adapters.volumes import list_volumes
 from discoclaro.domain.models import (
+    LargeFile,
     Node,
     ResumedSubtree,
     ScanResult,
@@ -52,6 +53,7 @@ class FakeScanner:
         self,
         path,
         skip_root_files=(),
+        large_file_bytes=None,
         on_progress=None,
         resume=None,
         on_subtree_done=None,
@@ -66,7 +68,9 @@ class FakeScanner:
         return self.result
 
 
-def make_result(nodes=None, unreadable_count=0, skipped_links=0, duplicate_bytes=0):
+def make_result(
+    nodes=None, unreadable_count=0, skipped_links=0, duplicate_bytes=0, large_files=()
+):
     nodes = nodes or [Node("C:\\", None, 350, 7, 0)]
     return ScanResult(
         root=nodes[-1].path,
@@ -75,6 +79,7 @@ def make_result(nodes=None, unreadable_count=0, skipped_links=0, duplicate_bytes
         unreadable=(),
         skipped_links=skipped_links,
         duplicate_bytes=duplicate_bytes,
+        large_files=tuple(large_files),
     )
 
 
@@ -341,6 +346,34 @@ def test_keep_node_keeps_shallow_or_big_folders(depth, size, kept):
     assert keep_node(Node("C:\\x", "C:\\", size, 1, depth)) is kept
 
 
+def test_large_files_are_saved_alongside_the_nodes(store):
+    large_files = [LargeFile("C:\\model.gguf", 100)]
+    scanner = FakeScanner(make_result(large_files=large_files))
+    summary = run("C:", store, scanner)
+    assert summary.large_files_saved == 1
+    assert store.large_files(summary.snapshot.id) == large_files
+
+
+def test_no_large_files_means_nothing_extra_is_saved(store):
+    summary = run("C:", store, FakeScanner(make_result()))
+    assert summary.large_files_saved == 0
+    assert store.large_files(summary.snapshot.id) == []
+
+
+def test_the_scanner_is_called_with_the_large_file_threshold(store):
+    seen = []
+
+    def scanner(path, **kwargs):
+        seen.append(kwargs.get("large_file_bytes"))
+        return make_result()
+
+    run("C:", store, scanner)
+    assert seen == [scan_service.LARGE_FILE_MIN_BYTES]
+    # El mismo número decide qué carpeta se guarda y qué archivo se guarda aparte
+    # (ver el comentario junto a KEEP_MIN_BYTES en services/scan_service.py).
+    assert scan_service.KEEP_MIN_BYTES == scan_service.LARGE_FILE_MIN_BYTES
+
+
 def test_only_the_folders_that_pass_the_rule_are_saved(store):
     nodes = [
         Node("C:\\a\\b\\c\\d\\small", "C:\\a\\b\\c\\d", 10, 1, 5),
@@ -462,6 +495,7 @@ class InterruptingScanner:
         self,
         path,
         skip_root_files=(),
+        large_file_bytes=None,
         on_progress=None,
         resume=None,
         on_subtree_done=None,
@@ -531,6 +565,7 @@ def test_on_checkpoint_fires_once_per_subtree_done(tmp_path, store):
             self,
             path,
             skip_root_files=(),
+            large_file_bytes=None,
             on_progress=None,
             resume=None,
             on_subtree_done=None,

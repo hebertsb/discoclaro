@@ -19,11 +19,18 @@ from discoclaro.domain.formatting import (
     format_table,
     safe_text,
 )
-from discoclaro.domain.models import Node, ScanProgress
+from discoclaro.domain.growth import CategoryGrowth, FolderGrowth
+from discoclaro.domain.models import LargeFile, Node, ScanProgress
 from discoclaro.domain.unexplained import Unexplained
 from discoclaro.i18n import t
 from discoclaro.platform import windows
-from discoclaro.services import elevation_service, report_service, scan_service
+from discoclaro.services import (
+    elevation_service,
+    growth_service,
+    report_service,
+    scan_service,
+)
+from discoclaro.services.growth_service import Growth, GrowthError
 from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
 
@@ -81,6 +88,34 @@ def build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help=t("cli.report.by_category_help"),
             )
+        elif name == "growth":
+            subparser.add_argument(
+                "target",
+                nargs="?",
+                metavar=t("cli.growth.target_name"),
+                help=t("cli.growth.target_help"),
+            )
+            subparser.add_argument(
+                "--since",
+                default=growth_service.DEFAULT_SINCE,
+                metavar=t("cli.growth.since_name"),
+                help=t("cli.growth.since_help"),
+            )
+            subparser.add_argument(
+                "--top",
+                type=int,
+                default=growth_service.DEFAULT_TOP_N,
+                metavar="N",
+                help=t("cli.growth.top_help"),
+            )
+            subparser.add_argument(
+                "--json", action="store_true", help=t("cli.growth.json_help")
+            )
+            subparser.add_argument(
+                "--by-category",
+                action="store_true",
+                help=t("cli.growth.by_category_help"),
+            )
     return parser
 
 
@@ -92,6 +127,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _scan(args.target, args.admin, args.restart)
     if args.command == "report":
         return _report(args.target, args.top, args.json, args.by_category)
+    if args.command == "growth":
+        return _growth(args.target, args.since, args.top, args.json, args.by_category)
     return 0
 
 
@@ -207,8 +244,34 @@ def _report(target: str | None, top_n: int, as_json: bool, by_category: bool) ->
     return 0
 
 
+def _growth(
+    target: str | None, since: str, top_n: int, as_json: bool, by_category: bool
+) -> int:
+    """Compara dos fotos ya guardadas y muestra lo que cambió, en tabla o en JSON."""
+    try:
+        growth = growth_service.run_growth(
+            target, since, top_n=top_n, by_category=by_category
+        )
+    except GrowthError as error:
+        message = t(f"errors.{error.kind}", target=safe_text(error.target))
+        print(message, file=sys.stderr)
+        return 1
+    if as_json:
+        print(json.dumps(_growth_to_json(growth), ensure_ascii=False, indent=2))
+    else:
+        for line in _growth_lines(growth):
+            print(line)
+    return 0
+
+
 def _size(value: int) -> str:
     return format_bytes(value, t("format.decimal_separator"))
+
+
+def _signed_size(value: int) -> str:
+    """Como `_size`, pero con el signo adelante: `format_bytes` no acepta negativos."""
+    sign = "+" if value >= 0 else "-"
+    return f"{sign}{_size(abs(value))}"
 
 
 def _number(value: int) -> str:
@@ -358,6 +421,117 @@ def _node_to_json(node: Node) -> dict[str, object]:
         "n_files": node.n_files,
         "depth": node.depth,
     }
+
+
+def _growth_lines(growth: Growth) -> list[str]:
+    """Las líneas de la comparación: título, tabla de cambios y archivos nuevos."""
+    before_at = growth.before.taken_at.astimezone().strftime("%Y-%m-%d %H:%M")
+    after_at = growth.after.taken_at.astimezone().strftime("%Y-%m-%d %H:%M")
+    lines = [
+        t(
+            "growth.title",
+            target=safe_text(growth.after.volume),
+            before=before_at,
+            after=after_at,
+        )
+    ]
+    if growth.categories is not None:
+        lines.extend(_category_growth_table(growth.categories))
+        lines.append(
+            t("growth.shown_categories", shown=_number(len(growth.categories)))
+        )
+    else:
+        lines.extend(_folder_growth_table(growth.folders))
+        lines.append(t("growth.shown_folders", shown=_number(len(growth.folders))))
+    if growth.new_large_files:
+        lines.append(t("growth.new_files_title"))
+        headers = [t("growth.column_file"), t("growth.column_size")]
+        rows = [
+            [safe_text(file.path), _size(file.size_bytes)]
+            for file in growth.new_large_files
+        ]
+        lines.extend(format_table(headers, rows, align=("l", "r")))
+    return lines
+
+
+def _folder_growth_table(folders: tuple[FolderGrowth, ...]) -> list[str]:
+    headers = [
+        t("growth.column_path"),
+        t("growth.column_before"),
+        t("growth.column_after"),
+        t("growth.column_grown"),
+    ]
+    rows = [
+        [
+            safe_text(folder.path),
+            _size(folder.before_bytes),
+            _size(folder.after_bytes),
+            _signed_size(folder.grown_bytes),
+        ]
+        for folder in folders
+    ]
+    return format_table(headers, rows, align=("l", "r", "r", "r"))
+
+
+def _category_growth_table(categories: tuple[CategoryGrowth, ...]) -> list[str]:
+    headers = [
+        t("growth.column_category"),
+        t("growth.column_before"),
+        t("growth.column_after"),
+        t("growth.column_grown"),
+    ]
+    rows = [
+        [
+            safe_text(category.category),
+            _size(category.before_bytes),
+            _size(category.after_bytes),
+            _signed_size(category.grown_bytes),
+        ]
+        for category in categories
+    ]
+    return format_table(headers, rows, align=("l", "r", "r", "r"))
+
+
+def _growth_to_json(growth: Growth) -> dict[str, object]:
+    """La comparación como datos simples y sin traducir, para `--json`."""
+    return {
+        "target": growth.after.volume,
+        "before_snapshot_id": growth.before.id,
+        "after_snapshot_id": growth.after.id,
+        "before_taken_at": growth.before.taken_at.isoformat(),
+        "after_taken_at": growth.after.taken_at.isoformat(),
+        "folders": [_folder_growth_to_json(folder) for folder in growth.folders],
+        "by_category": None
+        if growth.categories is None
+        else [_category_growth_to_json(category) for category in growth.categories],
+        "new_large_files": [
+            _large_file_to_json(file) for file in growth.new_large_files
+        ],
+    }
+
+
+def _folder_growth_to_json(folder: FolderGrowth) -> dict[str, object]:
+    return {
+        "path": folder.path,
+        "depth": folder.depth,
+        "before_bytes": folder.before_bytes,
+        "after_bytes": folder.after_bytes,
+        "grown_bytes": folder.grown_bytes,
+        "is_new": folder.is_new,
+    }
+
+
+def _category_growth_to_json(category: CategoryGrowth) -> dict[str, object]:
+    return {
+        "category": category.category,
+        "before_bytes": category.before_bytes,
+        "after_bytes": category.after_bytes,
+        "grown_bytes": category.grown_bytes,
+    }
+
+
+def _large_file_to_json(file: LargeFile) -> dict[str, object]:
+    return {"path": file.path, "size_bytes": file.size_bytes}
 
 
 def _unexplained_lines(

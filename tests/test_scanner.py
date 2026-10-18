@@ -9,7 +9,13 @@ import pytest
 
 from discoclaro.adapters import scanner
 from discoclaro.adapters.scanner import enumerate_with_scandir, scan_tree
-from discoclaro.domain.models import DirectoryEntry, Node, ResumedSubtree, Unreadable
+from discoclaro.domain.models import (
+    DirectoryEntry,
+    LargeFile,
+    Node,
+    ResumedSubtree,
+    Unreadable,
+)
 from discoclaro.platform import windows_listing
 
 REPARSE_POINT = 0x400
@@ -335,6 +341,76 @@ def test_resumed_subtree_counts_carry_into_the_final_totals():
     )
     result = scan_tree("/r", fake_enumerator(tree), resume={"/r/a": known_a})
     assert (result.unreadable_count, result.skipped_links) == (3, 2)
+
+
+def test_a_file_at_or_above_the_threshold_is_recorded_as_a_large_file():
+    tree = {"/r": [file("/r/big.bin", 100), file("/r/small.bin", 99)]}
+    result = scan_tree("/r", fake_enumerator(tree), large_file_bytes=100)
+    assert result.large_files == (LargeFile("/r/big.bin", 100),)
+
+
+def test_the_threshold_defaults_to_the_domain_constant():
+    from discoclaro.domain.models import LARGE_FILE_MIN_BYTES
+
+    tree = {"/r": [file("/r/big.bin", LARGE_FILE_MIN_BYTES)]}
+    result = scan_tree("/r", fake_enumerator(tree))
+    assert result.large_files == (LargeFile("/r/big.bin", LARGE_FILE_MIN_BYTES),)
+
+
+def test_large_files_from_several_folders_are_all_collected():
+    tree = {
+        "/r": [folder("/r/a"), file("/r/root.bin", 100)],
+        "/r/a": [file("/r/a/x.bin", 200)],
+    }
+    result = scan_tree("/r", fake_enumerator(tree), large_file_bytes=100)
+    assert set(result.large_files) == {
+        LargeFile("/r/root.bin", 100),
+        LargeFile("/r/a/x.bin", 200),
+    }
+
+
+def test_large_files_are_not_deduplicated_by_hard_link():
+    tree = {"/r": [file("/r/a.bin", 100, ident(1)), file("/r/b.bin", 100, ident(1))]}
+    result = scan_tree("/r", fake_enumerator(tree), large_file_bytes=100)
+    assert set(result.large_files) == {
+        LargeFile("/r/a.bin", 100),
+        LargeFile("/r/b.bin", 100),
+    }
+    assert result.duplicate_bytes == 100
+
+
+def test_a_resumed_subtrees_large_files_carry_into_the_final_result():
+    tree = {"/r": [folder("/r/a")]}
+    known_a = ResumedSubtree(
+        nodes=(Node("/r/a", "/r", 100, 1, 1),),
+        large_files=(LargeFile("/r/a/big.bin", 100),),
+    )
+    result = scan_tree(
+        "/r", fake_enumerator(tree), large_file_bytes=100, resume={"/r/a": known_a}
+    )
+    assert result.large_files == (LargeFile("/r/a/big.bin", 100),)
+
+
+def test_on_subtree_done_only_carries_the_large_files_found_in_that_subtree():
+    tree = {
+        "/r": [folder("/r/a"), folder("/r/b")],
+        "/r/b": [file("/r/b/big.bin", 100)],
+    }
+    known_a = ResumedSubtree(
+        nodes=(Node("/r/a", "/r", 100, 1, 1),),
+        large_files=(LargeFile("/r/a/big.bin", 100),),
+    )
+    done = []
+    scan_tree(
+        "/r",
+        fake_enumerator(tree),
+        large_file_bytes=100,
+        resume={"/r/a": known_a},
+        on_subtree_done=lambda path, subtree: done.append((path, subtree)),
+    )
+    [(path, subtree)] = done
+    assert path == "/r/b"
+    assert subtree.large_files == (LargeFile("/r/b/big.bin", 100),)
 
 
 def test_different_ids_with_the_same_size_are_not_duplicates():

@@ -84,6 +84,27 @@ class Unreadable:
     reason: str
 
 
+# Un archivo individual se guarda aparte (T2.5) solo si llega a este tamaño; el resto
+# no se nombra, igual que las carpetas chicas (ver `keep_node` en services/scan_service
+# .py, que usa el mismo número). Así `growth` puede nombrar un archivo grande nuevo sin
+# que la base guarde cada archivo del disco.
+LARGE_FILE_MIN_BYTES = 50 * 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True)
+class LargeFile:
+    """Un archivo grande, guardado con su ruta para poder nombrarlo en `growth`."""
+
+    path: str
+    size_bytes: int
+
+    def __post_init__(self) -> None:
+        if not self.path:
+            raise ValueError("a large file needs a path")
+        if self.size_bytes < 0:
+            raise ValueError("large file size cannot be negative")
+
+
 @dataclass(frozen=True, slots=True)
 class ScanResult:
     """Resultado de recorrer un árbol de carpetas.
@@ -94,6 +115,7 @@ class ScanResult:
     reanálisis que no se siguieron. `duplicate_bytes` son los bytes que ocupan de más
     los enlaces duros (el mismo contenido con otro nombre): cada carpeta cuenta su
     contenido entero, así que la raíz los incluye y el total real es la raíz menos esto.
+    `large_files` son los archivos sueltos de al menos `LARGE_FILE_MIN_BYTES`.
     """
 
     root: str
@@ -102,6 +124,7 @@ class ScanResult:
     unreadable: tuple[Unreadable, ...]
     skipped_links: int
     duplicate_bytes: int = 0
+    large_files: tuple[LargeFile, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.nodes:
@@ -148,13 +171,15 @@ class ResumedSubtree:
     `nodes` son esa carpeta y todas sus subcarpetas, en orden posterior (T1.10): no
     hace falta volver a leerla. `duplicate_bytes`, `unreadable_count` y
     `skipped_links` son lo que esa carpeta aportó al total del escaneo completo; se
-    suman aparte al retomar porque no están dentro de `nodes`.
+    suman aparte al retomar porque no están dentro de `nodes`. `large_files` son los
+    archivos grandes que esa carpeta había encontrado (T2.5).
     """
 
     nodes: tuple[Node, ...]
     duplicate_bytes: int = 0
     unreadable_count: int = 0
     skipped_links: int = 0
+    large_files: tuple[LargeFile, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.nodes:

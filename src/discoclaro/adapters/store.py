@@ -1,4 +1,4 @@
-"""Base de datos de las fotos (SQLite): tablas `snapshots` y `nodes`.
+"""Base de datos de las fotos (SQLite): tablas `snapshots`, `nodes` y `large_files`.
 
 Reglas (amenaza 3 del modelo de amenazas):
 
@@ -19,7 +19,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
-from discoclaro.domain.models import Node, Snapshot
+from discoclaro.domain.models import LargeFile, Node, Snapshot
 from discoclaro.platform import windows
 
 BUSY_TIMEOUT_S = 5.0
@@ -73,6 +73,23 @@ MIGRATIONS = (
             "PRAGMA user_version = 2",
         ),
     ),
+    (
+        3,
+        (
+            # Archivos individuales grandes (T2.5), para que growth pueda nombrar uno
+            # nuevo; el resto de los archivos nunca se nombra, solo se suma.
+            """
+            CREATE TABLE large_files (
+                snapshot_id INTEGER NOT NULL
+                    REFERENCES snapshots (id) ON DELETE CASCADE,
+                path TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0)
+            )
+            """,
+            "CREATE INDEX large_files_by_path ON large_files (snapshot_id, path)",
+            "PRAGMA user_version = 3",
+        ),
+    ),
 )
 
 _INSERT_SNAPSHOT = """
@@ -87,6 +104,10 @@ _INSERT_NODE = """
     INSERT INTO nodes (
         snapshot_id, path, parent_path, size_bytes, n_files, depth, rule_id
     ) VALUES (?, ?, ?, ?, ?, ?, ?)
+"""
+
+_INSERT_LARGE_FILE = """
+    INSERT INTO large_files (snapshot_id, path, size_bytes) VALUES (?, ?, ?)
 """
 
 _SELECT_ALL_SNAPSHOTS = """
@@ -117,6 +138,13 @@ _SELECT_ONE_SNAPSHOT = """
 _SELECT_NODES = """
     SELECT path, parent_path, size_bytes, n_files, depth, rule_id
     FROM nodes
+    WHERE snapshot_id = ?
+    ORDER BY path, rowid
+"""
+
+_SELECT_LARGE_FILES = """
+    SELECT path, size_bytes
+    FROM large_files
     WHERE snapshot_id = ?
     ORDER BY path, rowid
 """
@@ -203,12 +231,18 @@ class Store:
     ) -> None:
         self.close()
 
-    def save_snapshot(self, snapshot: Snapshot, nodes: Iterable[Node]) -> int:
-        """Guarda una foto y sus carpetas en UNA transacción y devuelve su id.
+    def save_snapshot(
+        self,
+        snapshot: Snapshot,
+        nodes: Iterable[Node],
+        large_files: Iterable[LargeFile] = (),
+    ) -> int:
+        """Guarda una foto, sus carpetas y sus archivos grandes en UNA transacción.
 
-        Si algo falla a mitad (incluida una interrupción con Ctrl+C), no queda nada. El
-        `id` de `snapshot` se ignora: lo asigna la base. Los nombres con UTF-16 inválido
-        se guardan con U+FFFD, porque SQLite no puede representarlos.
+        Devuelve el id de la foto. Si algo falla a mitad (incluida una interrupción
+        con Ctrl+C), no queda nada. El `id` de `snapshot` se ignora: lo asigna la
+        base. Los nombres con UTF-16 inválido se guardan con U+FFFD, porque SQLite no
+        puede representarlos.
         """
         self._connection.execute("BEGIN IMMEDIATE")
         try:
@@ -218,6 +252,10 @@ class Store:
             snapshot_id = cursor.lastrowid
             self._connection.executemany(
                 _INSERT_NODE, (_node_params(snapshot_id, node) for node in nodes)
+            )
+            self._connection.executemany(
+                _INSERT_LARGE_FILE,
+                (_large_file_params(snapshot_id, file) for file in large_files),
             )
             self._connection.execute("COMMIT")
         except BaseException:
@@ -260,6 +298,13 @@ class Store:
             for path, parent_path, size_bytes, n_files, depth, rule_id in rows
         ]
 
+    def large_files(self, snapshot_id: int) -> list[LargeFile]:
+        """Los archivos grandes de una foto, ordenados por ruta; vacío si no hay."""
+        rows = self._connection.execute(_SELECT_LARGE_FILES, (snapshot_id,)).fetchall()
+        return [
+            LargeFile(path=path, size_bytes=size_bytes) for path, size_bytes in rows
+        ]
+
 
 def _clean(text: str) -> str:
     """Cambia los sustitutos sueltos por U+FFFD: SQLite guarda UTF-8 y no los acepta."""
@@ -298,6 +343,10 @@ def _node_params(snapshot_id: int | None, node: Node) -> tuple[object, ...]:
         node.depth,
         _clean_optional(node.rule_id),
     )
+
+
+def _large_file_params(snapshot_id: int | None, file: LargeFile) -> tuple[object, ...]:
+    return (snapshot_id, _clean(file.path), file.size_bytes)
 
 
 def _snapshot_from_row(row: tuple[object, ...]) -> Snapshot:

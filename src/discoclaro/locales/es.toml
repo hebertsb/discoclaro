@@ -6,8 +6,8 @@ description = "Explica por qué se llena tu disco."
 
 [cli.commands]
 scan = "Escanea un disco o una carpeta y guarda una foto."
-report = "Muestra un informe de lo que ocupa espacio (aún sin implementar)."
-growth = "Compara dos fotos y muestra qué creció (aún sin implementar)."
+report = "Muestra un informe de lo que ocupa espacio."
+growth = "Compara dos fotos y muestra qué creció."
 
 [cli.scan]
 target_name = "DESTINO"
@@ -19,6 +19,15 @@ restart_help = "Ignora un punto de control anterior y empieza el escaneo de cero
 target_name = "DESTINO"
 target_help = "Disco o carpeta ya escaneados antes (por ejemplo C:); si falta, usa la última foto guardada de cualquiera."
 top_help = "Cuántas carpetas mostrar, de mayor a menor tamaño (20 por defecto)."
+json_help = "Muestra el resultado en JSON en vez de en una tabla."
+by_category_help = "Agrupa por categoría del catálogo de reglas en vez de mostrar carpetas sueltas."
+
+[cli.growth]
+target_name = "DESTINO"
+target_help = "Disco o carpeta ya escaneados antes (por ejemplo C:); si falta, usa la última foto guardada de cualquiera."
+since_name = "DESDE"
+since_help = "Qué tan vieja tiene que ser la foto con la que se compara: un número y d, h o w (por ejemplo 7d, 24h, 2w). 7d por defecto."
+top_help = "Cuántas carpetas (o categorías) mostrar, de la que más creció a la que más encogió (20 por defecto)."
 json_help = "Muestra el resultado en JSON en vez de en una tabla."
 by_category_help = "Agrupa por categoría del catálogo de reglas en vez de mostrar carpetas sueltas."
 
@@ -52,6 +61,19 @@ column_folders = "Carpetas"
 shown = "Se muestran {shown} de {total} carpetas guardadas."
 shown_categories = "Se muestran {shown} categorías."
 
+[growth]
+title = "Cambios en {target} entre el {before} y el {after}."
+column_path = "Carpeta"
+column_category = "Categoría"
+column_before = "Antes"
+column_after = "Ahora"
+column_grown = "Diferencia"
+shown_folders = "Se muestran {shown} carpetas."
+shown_categories = "Se muestran {shown} categorías."
+new_files_title = "Archivos grandes nuevos:"
+column_file = "Archivo"
+column_size = "Tamaño"
+
 [admin]
 announce = "Se pedirá permiso de administrador para escanear {target} en modo solo lectura. Windows mostrará su propia ventana de permisos."
 command = "Orden que recibirá Windows: {command}"
@@ -73,3 +95,8 @@ report_no_snapshot_for_target = "No hay ninguna foto guardada de {target}. Corre
 integrity_failed = "No se pidió el permiso de administrador: lo instalado no coincide con lo esperado ({target}). Reinstala discoclaro y vuelve a intentarlo."
 unsafe_data_location = "No se escribió nada: {target} es un enlace o tiene más de un nombre, así que no es seguro escribir ahí. Revísalo a mano."
 scan_cancelled = "Escaneo cancelado por el usuario; no se guardó ninguna foto."
+growth_not_fixed_disk = "Esta ruta no está en un disco fijo, así que no se pudo buscar una foto de ella: {target}"
+growth_no_snapshots = "No hay ninguna foto guardada todavía. Corre `discoclaro scan <disco>` primero."
+growth_no_snapshot_for_target = "No hay ninguna foto guardada de {target}. Corre `discoclaro scan {target}` primero."
+growth_invalid_since = "«{target}» no es una antigüedad válida: un número y d, h o w, por ejemplo 7d."
+growth_not_enough_history = "No hay ninguna foto de {target} lo bastante vieja para comparar. Esperá más tiempo entre escaneos, o probá con un --since más chico."

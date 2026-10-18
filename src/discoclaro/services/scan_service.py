@@ -25,6 +25,7 @@ from discoclaro.adapters.scanner import scan_tree
 from discoclaro.adapters.store import Store, StoreError
 from discoclaro.adapters.volumes import list_volumes
 from discoclaro.domain.models import (
+    LARGE_FILE_MIN_BYTES,
     Node,
     ResumedSubtree,
     ScanProgress,
@@ -41,9 +42,11 @@ from discoclaro.domain.unexplained import (
 from discoclaro.platform import windows
 
 # Control de tamaño de la base (sección 5.3 del plan): solo se guardan las carpetas de
-# poca profundidad o grandes. La raíz siempre entra.
+# poca profundidad o grandes. La raíz siempre entra. El mismo número decide qué
+# archivo individual se guarda aparte (T2.5, LARGE_FILE_MIN_BYTES): una sola idea de
+# "lo bastante grande para importar", no dos números que podrían desalinearse.
 KEEP_MAX_DEPTH = 3
-KEEP_MIN_BYTES = 50 * 1024 * 1024
+KEEP_MIN_BYTES = LARGE_FILE_MIN_BYTES
 
 DATABASE_NAME = "discoclaro.db"
 _BARE_DRIVE = re.compile(r"[A-Za-z]:")
@@ -72,6 +75,7 @@ class ScanSummary:
     nodes_saved: int
     unexplained: Unexplained | None
     resumed_folders: int = 0
+    large_files_saved: int = 0
 
 
 def keep_node(node: Node) -> bool:
@@ -166,6 +170,7 @@ def scan_target(
         result = scanner(
             path,
             skip_root_files=windows.SYSTEM_FILE_NAMES if is_volume else (),
+            large_file_bytes=LARGE_FILE_MIN_BYTES,
             on_progress=on_progress,
             resume=resumed,
             on_subtree_done=handle_subtree_done if track_checkpoint else None,
@@ -190,7 +195,7 @@ def scan_target(
         duplicate_bytes=result.duplicate_bytes,
     )
     kept = [node for node in result.nodes if keep(node)]
-    snapshot_id = store.save_snapshot(snapshot, kept)
+    snapshot_id = store.save_snapshot(snapshot, kept, result.large_files)
     saved = dataclasses.replace(snapshot, id=snapshot_id)
     if checkpoint_path is not None:
         clear_checkpoint(checkpoint_path)
@@ -205,6 +210,7 @@ def scan_target(
         nodes_saved=len(kept),
         unexplained=unexplained_of(saved, threshold_percent),
         resumed_folders=len(resumed),
+        large_files_saved=len(result.large_files),
     )
 
 

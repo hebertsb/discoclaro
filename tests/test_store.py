@@ -11,7 +11,7 @@ import pytest
 
 from discoclaro.adapters import store as store_module
 from discoclaro.adapters.store import Store, StoreError
-from discoclaro.domain.models import Node, Snapshot
+from discoclaro.domain.models import LargeFile, Node, Snapshot
 from discoclaro.platform import windows
 
 T0 = datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
@@ -77,11 +77,11 @@ def count(store, table):
 
 def test_open_creates_the_schema_with_wal_and_foreign_keys(store):
     connection = store._connection
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
     assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     tables = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-    assert {row[0] for row in tables} == {"snapshots", "nodes"}
+    assert {row[0] for row in tables} == {"snapshots", "nodes", "large_files"}
     indexes = connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL"
     )
@@ -89,6 +89,7 @@ def test_open_creates_the_schema_with_wal_and_foreign_keys(store):
         "nodes_by_path",
         "nodes_by_rule",
         "snapshots_by_volume",
+        "large_files_by_path",
     }
 
 
@@ -115,6 +116,32 @@ def test_a_snapshot_and_its_folders_roundtrip(store):
     assert snapshot_id == 1
     assert store.get_snapshot(snapshot_id) == dataclasses.replace(snapshot, id=1)
     assert store.nodes(snapshot_id) == nodes
+
+
+def test_large_files_roundtrip_and_are_sorted_by_path(store):
+    files = [
+        LargeFile("C:\\z\\big.gguf", 100),
+        LargeFile("C:\\a\\model.gguf", 200),
+    ]
+    snapshot_id = store.save_snapshot(make_snapshot(), [], files)
+    assert store.large_files(snapshot_id) == sorted(files, key=lambda f: f.path)
+
+
+def test_a_snapshot_without_large_files_has_none(store):
+    snapshot_id = store.save_snapshot(make_snapshot(), [])
+    assert store.large_files(snapshot_id) == []
+
+
+def test_large_files_of_a_missing_snapshot_is_empty(store):
+    assert store.large_files(9999) == []
+
+
+def test_large_files_are_deleted_with_their_snapshot(store):
+    snapshot_id = store.save_snapshot(
+        make_snapshot(), [], [LargeFile("C:\\a.bin", 100)]
+    )
+    store._connection.execute("DELETE FROM snapshots WHERE id = ?", (snapshot_id,))
+    assert store.large_files(snapshot_id) == []
 
 
 def test_time_is_stored_in_utc_and_comes_back_equal(store):
@@ -238,7 +265,7 @@ def test_hostile_names_are_stored_and_recovered_verbatim_and_the_tables_survive(
     tables = store._connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table'"
     )
-    assert {row[0] for row in tables} == {"snapshots", "nodes"}
+    assert {row[0] for row in tables} == {"snapshots", "nodes", "large_files"}
     assert count(store, "snapshots") == 1
     assert count(store, "nodes") == len(HOSTILE)
     assert store.save_snapshot(make_snapshot(), make_nodes()) == snapshot_id + 1
@@ -385,7 +412,7 @@ def test_a_version_1_database_is_migrated_keeping_its_photos(db_path):
         assert (old.id, old.scanned_bytes, old.duplicate_bytes) == (1, 300, 0)
         store.save_snapshot(make_snapshot(duplicate_bytes=50), [])
         assert store.snapshots("C:")[0].duplicate_bytes == 50
-    assert raw_query(db_path, "PRAGMA user_version") == [(2,)]
+    assert raw_query(db_path, "PRAGMA user_version") == [(3,)]
 
 
 def test_migrations_are_applied_one_version_at_a_time(db_path, monkeypatch):
