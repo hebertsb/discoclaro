@@ -436,6 +436,8 @@ def _summary_lines(summary: ScanSummary) -> list[str]:
             _unexplained_lines(summary.unexplained, snapshot.is_admin, snapshot.volume)
         )
     lines.append(t("scan.saved", id=snapshot.id, nodes=_number(summary.nodes_saved)))
+    if summary.pruned_snapshots:
+        lines.append(t("scan.pruned", count=_number(summary.pruned_snapshots)))
     return lines
 
 

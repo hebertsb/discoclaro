@@ -144,6 +144,39 @@ def test_large_files_are_deleted_with_their_snapshot(store):
     assert store.large_files(snapshot_id) == []
 
 
+def test_delete_snapshots_removes_the_given_ids(store):
+    kept_id = store.save_snapshot(make_snapshot(), [])
+    doomed_id = store.save_snapshot(make_snapshot(), [])
+    store.delete_snapshots([doomed_id])
+    assert {s.id for s in store.snapshots()} == {kept_id}
+
+
+def test_delete_snapshots_takes_several_ids_at_once(store):
+    first = store.save_snapshot(make_snapshot(), [])
+    second = store.save_snapshot(make_snapshot(), [])
+    store.delete_snapshots([first, second])
+    assert store.snapshots() == []
+
+
+def test_delete_snapshots_with_an_empty_list_does_nothing(store):
+    kept_id = store.save_snapshot(make_snapshot(), [])
+    store.delete_snapshots([])
+    assert {s.id for s in store.snapshots()} == {kept_id}
+
+
+def test_delete_snapshots_of_a_missing_id_is_not_an_error(store):
+    store.delete_snapshots([9999])
+
+
+def test_delete_snapshots_cascades_to_nodes_and_large_files(store):
+    snapshot_id = store.save_snapshot(
+        make_snapshot(), make_nodes(), [LargeFile("C:\\a.bin", 100)]
+    )
+    store.delete_snapshots([snapshot_id])
+    assert store.nodes(snapshot_id) == []
+    assert store.large_files(snapshot_id) == []
+
+
 def test_an_alert_never_fired_has_no_last_time(store):
     assert store.last_alert_at("volume_low_free", "C:") is None
 

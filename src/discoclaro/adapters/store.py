@@ -172,6 +172,8 @@ _UPSERT_ALERT = """
     ON CONFLICT (kind, target) DO UPDATE SET fired_at = excluded.fired_at
 """
 
+_DELETE_SNAPSHOT = "DELETE FROM snapshots WHERE id = ?"
+
 # En Python, un sustituto suelto (UTF-16 inválido) es siempre un carácter solo.
 _LONE_SURROGATES = re.compile("[\ud800-\udfff]")
 
@@ -345,6 +347,12 @@ class Store:
                 fired_at.astimezone(UTC).isoformat(timespec="microseconds"),
             ),
         )
+
+    def delete_snapshots(self, ids: Iterable[int]) -> None:
+        """Borra esas fotos; sus carpetas y archivos grandes se van con ellas
+        (`ON DELETE CASCADE`). Lo usa la retención (T2.9) para no guardar todo
+        para siempre."""
+        self._connection.executemany(_DELETE_SNAPSHOT, [(i,) for i in ids])
 
 
 def _clean(text: str) -> str:

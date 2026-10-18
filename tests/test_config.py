@@ -91,6 +91,24 @@ def test_a_negative_min_display_gb_is_rejected():
         load_config_from_text("min_display_gb = -1")
 
 
+def test_retention_days_is_read_from_the_root():
+    assert load_config_from_text("retention_days = 7").retention_days == 7
+
+
+def test_a_negative_retention_days_is_rejected():
+    with pytest.raises(ConfigError):
+        load_config_from_text("retention_days = -1")
+
+
+def test_retention_days_zero_is_accepted():
+    assert load_config_from_text("retention_days = 0").retention_days == 0
+
+
+def test_a_fractional_retention_days_is_rejected():
+    with pytest.raises(ConfigError):
+        load_config_from_text("retention_days = 7.5")
+
+
 def test_unknown_keys_are_ignored_for_forward_compatibility():
     config = load_config_from_text('something_new = "x"\n[volumes."C:"]\nmore = 1\n')
     assert config.volumes == {"C:": VolumeLimit()}

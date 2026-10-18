@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from discoclaro.adapters import scan_checkpoint
+from discoclaro.adapters.config import load_user_config
 from discoclaro.adapters.scanner import scan_tree
 from discoclaro.adapters.store import Store, StoreError
 from discoclaro.adapters.volumes import list_volumes
@@ -34,6 +35,7 @@ from discoclaro.domain.models import (
     SystemFile,
     Volume,
 )
+from discoclaro.domain.retention import DEFAULT_RETENTION_DAYS, snapshots_to_delete
 from discoclaro.domain.unexplained import (
     DEFAULT_THRESHOLD_PERCENT,
     Unexplained,
@@ -76,6 +78,7 @@ class ScanSummary:
     unexplained: Unexplained | None
     resumed_folders: int = 0
     large_files_saved: int = 0
+    pruned_snapshots: int = 0
 
 
 def keep_node(node: Node) -> bool:
@@ -120,6 +123,7 @@ def scan_target(
     monotonic: Callable[[], float] = time.monotonic,
     keep: Callable[[Node], bool] = keep_node,
     threshold_percent: float = DEFAULT_THRESHOLD_PERCENT,
+    retention_days: int = DEFAULT_RETENTION_DAYS,
     on_progress: Callable[[ScanProgress], None] | None = None,
     checkpoint_path: Path | None = None,
     restart: bool = False,
@@ -197,6 +201,7 @@ def scan_target(
     kept = [node for node in result.nodes if keep(node)]
     snapshot_id = store.save_snapshot(snapshot, kept, result.large_files)
     saved = dataclasses.replace(snapshot, id=snapshot_id)
+    pruned = _prune_old_snapshots(store, saved.volume, retention_days, taken_at)
     if checkpoint_path is not None:
         clear_checkpoint(checkpoint_path)
     return ScanSummary(
@@ -211,12 +216,27 @@ def scan_target(
         unexplained=unexplained_of(saved, threshold_percent),
         resumed_folders=len(resumed),
         large_files_saved=len(result.large_files),
+        pruned_snapshots=pruned,
     )
+
+
+def _prune_old_snapshots(
+    store: Store, volume: str, retention_days: int, now: datetime
+) -> int:
+    """Borra, de las fotos ya guardadas de `volume`, las que sobran según T2.9.
+
+    Devuelve cuántas se borraron, para poder mostrárselo al usuario.
+    """
+    doomed = snapshots_to_delete(store.snapshots(volume), retention_days, now)
+    if doomed:
+        store.delete_snapshots(doomed)
+    return len(doomed)
 
 
 def run_scan(
     target: str,
     data_dir: Path | None = None,
+    config_dir: Path | None = None,
     *,
     on_progress: Callable[[ScanProgress], None] | None = None,
     on_checkpoint: Callable[[], None] | None = None,
@@ -229,7 +249,8 @@ def run_scan(
     revalida que ni la carpeta ni el archivo sean un enlace o tengan otro nombre
     (T1.9); si lo son, no se escribe nada. Siempre deja un punto de control (T1.10)
     en esa misma carpeta mientras escanea; `on_checkpoint` avisa cada vez que se
-    guarda uno (para poder pausar justo ahí, sin perder nada).
+    guarda uno (para poder pausar justo ahí, sin perder nada). La política de
+    retención (T2.9) sale de `config.toml` (`config_dir`, para probar).
     """
     try:
         directory = windows.default_data_dir() if data_dir is None else data_dir
@@ -240,6 +261,7 @@ def run_scan(
     except (OSError, sqlite3.Error, StoreError) as error:
         raise ScanError("cannot_open_database", str(error)) from error
     with store:
+        config = load_user_config(config_dir)
         return scan_target(
             target,
             store,
@@ -247,4 +269,5 @@ def run_scan(
             checkpoint_path=directory / scan_checkpoint.CHECKPOINT_NAME,
             restart=restart,
             on_checkpoint=on_checkpoint,
+            retention_days=config.retention_days,
         )

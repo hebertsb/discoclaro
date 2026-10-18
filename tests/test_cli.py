@@ -292,6 +292,20 @@ def test_no_resumed_folders_line_when_nothing_was_resumed(monkeypatch, capsys):
     assert "retomaron" not in capsys.readouterr().out
 
 
+def test_pruned_snapshots_line_appears_when_something_was_pruned(monkeypatch, capsys):
+    fake_run_scan(monkeypatch, dataclasses.replace(make_summary(), pruned_snapshots=2))
+    assert main(["scan", "C:"]) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "Se borraron 2 fotos viejas de este destino (política de retención)."
+    )
+
+
+def test_no_pruned_snapshots_line_when_nothing_was_pruned(monkeypatch, capsys):
+    fake_run_scan(monkeypatch, make_summary())
+    assert main(["scan", "C:"]) == 0
+    assert "retención" not in capsys.readouterr().out
+
+
 def test_scan_help_mentions_the_restart_option(capsys):
     with pytest.raises(SystemExit):
         main(["scan", "--help"])

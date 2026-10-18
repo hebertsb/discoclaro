@@ -62,6 +62,7 @@ unexplained = "Unexplained: {size} ({percent}% of used)."
 unexplained_warning = "Warning: {size} could not be explained. Some folders may only be readable by an administrator: try `discoclaro scan {volume} --admin`."
 unexplained_warning_admin = "Warning: even with administrator permissions {size} could not be explained. It may be file system space, such as metadata or volume copies."
 saved = "Snapshot saved: no. {id} ({nodes} folders stored)."
+pruned = "Deleted {count} old snapshots of this target (retention policy)."
 
 [report]
 title = "Largest folders of {target}, snapshot of {taken_at} (no. {id})."

@@ -7,6 +7,8 @@ Son datos, nunca código: nada de aquí decide si hay que avisar ni toca el disc
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from discoclaro.domain.retention import DEFAULT_RETENTION_DAYS
+
 GIB = 1024**3
 DEFAULT_WARN_AT_PERCENT = 85.0
 DEFAULT_MIN_DISPLAY_GB = 1.0
@@ -46,6 +48,7 @@ class Config:
     growth: GrowthLimits = field(default_factory=GrowthLimits)
     min_display_gb: float = DEFAULT_MIN_DISPLAY_GB
     disabled_alerts: frozenset[str] = frozenset()
+    retention_days: int = DEFAULT_RETENTION_DAYS
 
     def min_display_bytes(self) -> int:
         """`min_display_gb` en bytes, para comparar directo con tamaños del escaneo."""

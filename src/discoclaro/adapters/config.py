@@ -19,6 +19,7 @@ from discoclaro.domain.config import (
     GrowthLimits,
     VolumeLimit,
 )
+from discoclaro.domain.retention import DEFAULT_RETENTION_DAYS
 from discoclaro.platform import windows
 
 CONFIG_FILE_NAME = "config.toml"
@@ -45,6 +46,7 @@ def load_config_from_text(text: str, source: str = "<texto>") -> Config:
         raise ConfigError(f"{source}: the file must be a table")
     try:
         min_display_gb = _optional_number(data, "min_display_gb", "<root>")
+        retention_days = _optional_int(data, "retention_days", "<root>")
         return Config(
             volumes=_build_volumes(data.get("volumes", {})),
             budgets=_build_budgets(data.get("budgets", {})),
@@ -53,6 +55,9 @@ def load_config_from_text(text: str, source: str = "<texto>") -> Config:
                 DEFAULT_MIN_DISPLAY_GB if min_display_gb is None else min_display_gb
             ),
             disabled_alerts=_build_disabled_alerts(data.get("alerts", {})),
+            retention_days=(
+                DEFAULT_RETENTION_DAYS if retention_days is None else retention_days
+            ),
         )
     except ValueError as error:
         raise ConfigError(f"{source}: {error}") from error
@@ -151,6 +156,19 @@ def _build_disabled_alerts(raw: object) -> frozenset[str]:
         if not enabled:
             disabled.add(kind)
     return frozenset(disabled)
+
+
+def _optional_int(
+    raw: dict[str, object], field: str, path: str, *, minimum: int = 0
+) -> int | None:
+    if field not in raw:
+        return None
+    value = raw[field]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{path}.{field} must be a whole number")
+    if value < minimum:
+        raise ValueError(f"{path}.{field} must be at least {minimum}")
+    return value
 
 
 def _optional_number(

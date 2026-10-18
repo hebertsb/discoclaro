@@ -2,6 +2,7 @@
 
 from discoclaro.domain.config import (
     DEFAULT_MIN_DISPLAY_GB,
+    DEFAULT_RETENTION_DAYS,
     DEFAULT_WARN_AT_PERCENT,
     GIB,
     Budget,
@@ -62,3 +63,7 @@ def test_an_alert_in_disabled_alerts_is_not_enabled():
     config = Config(disabled_alerts=frozenset({"big_new_file"}))
     assert config.is_alert_enabled("big_new_file") is False
     assert config.is_alert_enabled("budget_exceeded") is True
+
+
+def test_a_default_config_uses_the_default_retention():
+    assert Config().retention_days == DEFAULT_RETENTION_DAYS

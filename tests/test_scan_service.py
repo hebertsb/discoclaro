@@ -3,7 +3,7 @@
 import inspect
 import os
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -16,6 +16,7 @@ from discoclaro.domain.models import (
     Node,
     ResumedSubtree,
     ScanResult,
+    Snapshot,
     SystemFile,
     Volume,
 )
@@ -374,6 +375,44 @@ def test_the_scanner_is_called_with_the_large_file_threshold(store):
     assert scan_service.KEEP_MIN_BYTES == scan_service.LARGE_FILE_MIN_BYTES
 
 
+def old_snapshot(days_ago, volume="C:"):
+    return Snapshot(
+        taken_at=T0 - timedelta(days=days_ago),
+        volume=volume,
+        total_bytes=1000,
+        used_bytes=400,
+        free_bytes=600,
+        scanned_bytes=350,
+        system_files_bytes=0,
+        unreadable_bytes=0,
+        unreadable_count=0,
+        duration_s=1.0,
+        is_admin=False,
+    )
+
+
+def test_a_scan_prunes_old_snapshots_of_the_same_target(store):
+    doomed_id = store.save_snapshot(old_snapshot(61), [])
+    kept_old_id = store.save_snapshot(old_snapshot(60), [])
+    summary = run("C:", store, retention_days=30)
+    remaining = {s.id for s in store.snapshots("C:")}
+    assert doomed_id not in remaining
+    assert kept_old_id in remaining
+    assert summary.snapshot.id in remaining
+    assert summary.pruned_snapshots == 1
+
+
+def test_a_scan_does_not_prune_snapshots_of_a_different_target(store):
+    other_target_id = store.save_snapshot(old_snapshot(61, volume="D:"), [])
+    run("C:", store, retention_days=30)
+    assert other_target_id in {s.id for s in store.snapshots("D:")}
+
+
+def test_a_scan_with_nothing_old_prunes_nothing(store):
+    summary = run("C:", store, retention_days=30)
+    assert summary.pruned_snapshots == 0
+
+
 def test_only_the_folders_that_pass_the_rule_are_saved(store):
     nodes = [
         Node("C:\\a\\b\\c\\d\\small", "C:\\a\\b\\c\\d", 10, 1, 5),
@@ -481,6 +520,33 @@ def test_run_scan_uses_the_default_data_folder_when_none_is_given(
     monkeypatch.setattr(scan_service, "scan_target", lambda target, store, **kw: "ok")
     assert scan_service.run_scan("C:") == "ok"
     assert (tmp_path / "default" / "discoclaro.db").exists()
+
+
+def test_run_scan_passes_the_configured_retention_to_scan_target(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_scan_target(target, store, **kwargs):
+        seen["retention_days"] = kwargs["retention_days"]
+        return "ok"
+
+    monkeypatch.setattr(scan_service, "scan_target", fake_scan_target)
+    (tmp_path / "config.toml").write_text("retention_days = 10\n", encoding="utf-8")
+    assert scan_service.run_scan("C:", tmp_path / "data", tmp_path) == "ok"
+    assert seen["retention_days"] == 10
+
+
+def test_run_scan_without_a_config_file_uses_the_default_retention(
+    tmp_path, monkeypatch
+):
+    seen = {}
+
+    def fake_scan_target(target, store, **kwargs):
+        seen["retention_days"] = kwargs["retention_days"]
+        return "ok"
+
+    monkeypatch.setattr(scan_service, "scan_target", fake_scan_target)
+    scan_service.run_scan("C:", tmp_path / "data", tmp_path / "no_config_here")
+    assert seen["retention_days"] == scan_service.DEFAULT_RETENTION_DAYS
 
 
 class InterruptingScanner:
