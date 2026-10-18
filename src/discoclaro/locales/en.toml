@@ -9,6 +9,7 @@ scan = "Scans a disk or a folder and saves a snapshot."
 report = "Shows a report of what takes up space."
 growth = "Compares two snapshots and shows what grew."
 check = "Evaluates the configured alerts and notifies the ones that apply."
+schedule = "Installs, removes or checks the scheduled task that scans and checks alerts."
 
 [cli.scan]
 target_name = "TARGET"
@@ -34,6 +35,13 @@ by_category_help = "Groups by category from the rule catalog instead of showing 
 
 [cli.check]
 json_help = "Show the result as JSON instead of a table."
+
+[cli.schedule]
+install_help = "Creates (or replaces) the tasks that scan and check alerts every day."
+remove_help = "Removes the scheduled tasks."
+status_help = "Shows whether the scheduled tasks are already installed."
+target_name = "TARGET"
+target_help = "Disk (for example C:) or folder the task will scan every day."
 
 [format]
 decimal_separator = "."
@@ -85,6 +93,15 @@ column_detail = "Detail"
 shown = "Notified about {shown} things."
 none_found = "Nothing to notify."
 
+[schedule]
+installed = "Scheduled tasks: {target} will be scanned and alerts checked, every day at {time}."
+removed = "The scheduled tasks were removed."
+not_installed = "There were no scheduled tasks to remove."
+status_scan_installed = "Scheduled scan: installed."
+status_scan_not_installed = "Scheduled scan: not installed."
+status_check_installed = "Scheduled check: installed."
+status_check_not_installed = "Scheduled check: not installed."
+
 [alerts]
 title_volume_low_free = "Low free space"
 title_volume_near_limit = "Disk almost full"
@@ -126,3 +143,4 @@ growth_no_snapshot_for_target = "There is no snapshot saved of {target}. Run `di
 growth_invalid_since = "\"{target}\" is not a valid age: a number and d, h or w, for example 7d."
 growth_not_enough_history = "There is no snapshot of {target} old enough to compare with. Wait longer between scans, or try a smaller --since."
 check_no_snapshots = "There is no snapshot saved yet. Run `discoclaro scan <disk>` first."
+schedule_failed = "Could not create the scheduled task: {target}"

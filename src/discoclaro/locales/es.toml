@@ -9,6 +9,7 @@ scan = "Escanea un disco o una carpeta y guarda una foto."
 report = "Muestra un informe de lo que ocupa espacio."
 growth = "Compara dos fotos y muestra qué creció."
 check = "Evalúa los avisos configurados y notifica los que correspondan."
+schedule = "Instala, quita o consulta la tarea programada que escanea y revisa avisos."
 
 [cli.scan]
 target_name = "DESTINO"
@@ -34,6 +35,13 @@ by_category_help = "Agrupa por categoría del catálogo de reglas en vez de most
 
 [cli.check]
 json_help = "Muestra el resultado en JSON en vez de en una tabla."
+
+[cli.schedule]
+install_help = "Crea (o reemplaza) las tareas que escanean y revisan avisos todos los días."
+remove_help = "Quita las tareas programadas."
+status_help = "Muestra si las tareas programadas ya están instaladas."
+target_name = "DESTINO"
+target_help = "Disco (por ejemplo C:) o carpeta que la tarea escaneará cada día."
 
 [format]
 decimal_separator = ","
@@ -85,6 +93,15 @@ column_detail = "Detalle"
 shown = "Se avisó de {shown} cosas."
 none_found = "Nada que avisar."
 
+[schedule]
+installed = "Tareas programadas: {target} se escaneará y se revisarán los avisos, todos los días a las {time}."
+removed = "Se quitaron las tareas programadas."
+not_installed = "No había tareas programadas para quitar."
+status_scan_installed = "Escaneo programado: instalado."
+status_scan_not_installed = "Escaneo programado: no instalado."
+status_check_installed = "Chequeo programado: instalado."
+status_check_not_installed = "Chequeo programado: no instalado."
+
 [alerts]
 title_volume_low_free = "Poco espacio libre"
 title_volume_near_limit = "Disco casi lleno"
@@ -126,3 +143,4 @@ growth_no_snapshot_for_target = "No hay ninguna foto guardada de {target}. Corre
 growth_invalid_since = "«{target}» no es una antigüedad válida: un número y d, h o w, por ejemplo 7d."
 growth_not_enough_history = "No hay ninguna foto de {target} lo bastante vieja para comparar. Esperá más tiempo entre escaneos, o probá con un --since más chico."
 check_no_snapshots = "No hay ninguna foto guardada todavía. Corre `discoclaro scan <disco>` primero."
+schedule_failed = "No se pudo crear la tarea programada: {target}"

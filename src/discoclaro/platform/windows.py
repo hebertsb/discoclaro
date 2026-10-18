@@ -283,6 +283,90 @@ def pause_requested(
     return pressed
 
 
+SCHEDULED_TASK_TIMEOUT_S = 15.0
+
+
+class ScheduledTaskError(OSError):
+    """`schtasks.exe` devolvió un error al crear, quitar o consultar una tarea."""
+
+
+def _schtasks_path(environ: Mapping[str, str] | None = None) -> Path:
+    """Ruta completa de `schtasks.exe`: nunca se confía en que esté en el PATH."""
+    environ = os.environ if environ is None else environ
+    windir = environ.get("WINDIR", "")
+    if not windir:
+        raise OSError("WINDIR is not set")
+    return Path(windir) / "System32" / "schtasks.exe"
+
+
+def create_scheduled_task(
+    name: str,
+    command: Sequence[str],
+    *,
+    schedule: str,
+    start_time: str,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> None:
+    """Crea (o reemplaza) la tarea `name`, que corre `command` sin elevar.
+
+    `command` es el ejecutable y sus argumentos, nunca un texto para una terminal:
+    se le pasa a `schtasks.exe` ya armado con las mismas reglas de citado que vería
+    Windows (`command_line`), sin pasar por ninguna terminal. Lanza
+    `ScheduledTaskError` si `schtasks.exe` no pudo crearla. `run` se puede inyectar
+    para probar sin tocar el Programador de tareas real.
+    """
+    result = run(
+        [
+            str(_schtasks_path()),
+            "/create",
+            "/tn",
+            name,
+            "/tr",
+            command_line(command),
+            "/sc",
+            schedule,
+            "/st",
+            start_time,
+            "/f",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=SCHEDULED_TASK_TIMEOUT_S,
+    )
+    if result.returncode != 0:
+        raise ScheduledTaskError(result.returncode, result.stderr.strip())
+
+
+def remove_scheduled_task(
+    name: str,
+    *,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> bool:
+    """Quita la tarea `name`. Devuelve si existía: que no exista no es un error."""
+    result = run(
+        [str(_schtasks_path()), "/delete", "/tn", name, "/f"],
+        capture_output=True,
+        text=True,
+        timeout=SCHEDULED_TASK_TIMEOUT_S,
+    )
+    return result.returncode == 0
+
+
+def scheduled_task_exists(
+    name: str,
+    *,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> bool:
+    """Si la tarea `name` ya existe en el Programador de tareas."""
+    result = run(
+        [str(_schtasks_path()), "/query", "/tn", name],
+        capture_output=True,
+        text=True,
+        timeout=SCHEDULED_TASK_TIMEOUT_S,
+    )
+    return result.returncode == 0
+
+
 def environment_variables(environ: Mapping[str, str] | None = None) -> dict[str, str]:
     """Los valores reales de las variables que aceptan los patrones de las reglas.
 

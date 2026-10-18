@@ -5,6 +5,7 @@ import inspect
 import logging
 import os
 import stat
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -410,7 +411,6 @@ def test_a_real_ordinary_file_in_a_tmp_folder_is_safe_to_write(tmp_path):
 @pytest.mark.skipif(sys.platform != "win32", reason="usa archivos reales de Windows")
 def test_a_real_junction_is_refused(tmp_path):
     import shutil
-    import subprocess
 
     real = tmp_path / "real"
     real.mkdir()
@@ -498,3 +498,108 @@ def test_environment_variables_reads_the_real_environment_by_default():
     found = windows.environment_variables()
     assert isinstance(found, dict)
     assert all(key in windows.ENVIRONMENT_VARIABLES for key in found)
+
+
+def fake_run(returncode=0, stderr=""):
+    """Reemplaza `subprocess.run`; devuelve (los llamados, la función falsa)."""
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        return types.SimpleNamespace(returncode=returncode, stderr=stderr, stdout="")
+
+    return calls, run
+
+
+def test_create_scheduled_task_calls_schtasks_with_a_list_of_arguments():
+    calls, run = fake_run()
+    windows.create_scheduled_task(
+        "\\discoclaro\\scan",
+        ["C:\\venv\\python.exe", "-m", "discoclaro", "scan", "C:"],
+        schedule="DAILY",
+        start_time="09:00",
+        run=run,
+    )
+    (args, kwargs) = calls[0]
+    assert args[0].lower().endswith("schtasks.exe")
+    assert args[1:] == [
+        "/create",
+        "/tn",
+        "\\discoclaro\\scan",
+        "/tr",
+        "C:\\venv\\python.exe -m discoclaro scan C:",
+        "/sc",
+        "DAILY",
+        "/st",
+        "09:00",
+        "/f",
+    ]
+    assert kwargs["timeout"] == windows.SCHEDULED_TASK_TIMEOUT_S
+    assert "shell" not in kwargs
+
+
+def test_create_scheduled_task_quotes_a_path_with_spaces():
+    calls, run = fake_run()
+    windows.create_scheduled_task(
+        "\\discoclaro\\scan",
+        ["C:\\Program Files\\Python\\python.exe", "-m", "discoclaro", "check"],
+        schedule="DAILY",
+        start_time="09:00",
+        run=run,
+    )
+    (args, _) = calls[0]
+    assert args[args.index("/tr") + 1] == (
+        '"C:\\Program Files\\Python\\python.exe" -m discoclaro check'
+    )
+
+
+def test_create_scheduled_task_raises_when_schtasks_fails():
+    _, run = fake_run(returncode=1, stderr="ERROR: access denied")
+    with pytest.raises(windows.ScheduledTaskError):
+        windows.create_scheduled_task(
+            "\\discoclaro\\scan", ["x"], schedule="DAILY", start_time="09:00", run=run
+        )
+
+
+def test_remove_scheduled_task_returns_true_when_it_existed():
+    _, run = fake_run(returncode=0)
+    assert windows.remove_scheduled_task("\\discoclaro\\scan", run=run) is True
+
+
+def test_remove_scheduled_task_returns_false_when_it_did_not_exist():
+    _, run = fake_run(returncode=1)
+    assert windows.remove_scheduled_task("\\discoclaro\\scan", run=run) is False
+
+
+def test_remove_scheduled_task_uses_delete_and_force():
+    calls, run = fake_run()
+    windows.remove_scheduled_task("\\discoclaro\\scan", run=run)
+    (args, _) = calls[0]
+    assert args[1:] == ["/delete", "/tn", "\\discoclaro\\scan", "/f"]
+
+
+def test_scheduled_task_exists_is_true_when_schtasks_finds_it():
+    _, run = fake_run(returncode=0)
+    assert windows.scheduled_task_exists("\\discoclaro\\scan", run=run) is True
+
+
+def test_scheduled_task_exists_is_false_when_schtasks_does_not_find_it():
+    _, run = fake_run(returncode=1)
+    assert windows.scheduled_task_exists("\\discoclaro\\scan", run=run) is False
+
+
+def test_scheduled_task_exists_uses_query():
+    calls, run = fake_run()
+    windows.scheduled_task_exists("\\discoclaro\\scan", run=run)
+    (args, _) = calls[0]
+    assert args[1:] == ["/query", "/tn", "\\discoclaro\\scan"]
+
+
+def test_the_real_subprocess_run_is_the_default_without_calling_it():
+    for function in (
+        windows.create_scheduled_task,
+        windows.remove_scheduled_task,
+        windows.scheduled_task_exists,
+    ):
+        parameters = inspect.signature(function).parameters
+        assert parameters["run"].default is subprocess.run

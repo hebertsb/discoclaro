@@ -26,6 +26,7 @@ from discoclaro.services.check_service import CheckError
 from discoclaro.services.growth_service import Growth, GrowthError
 from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
+from discoclaro.services.schedule_service import ScheduleError, ScheduleStatus
 
 GIB = 1024**3
 
@@ -1186,6 +1187,111 @@ def test_check_errors_show_a_safe_target_and_exit_code_1(monkeypatch, capsys):
     assert captured.out == ""
     assert "No se pudo abrir la base de datos de discoclaro: " in captured.err
     assert "D:\\x?[31m?falso" in captured.err
+
+
+def fake_schedule_install(monkeypatch, error=None):
+    calls = []
+
+    def install(target):
+        calls.append(target)
+        if error:
+            raise error
+
+    monkeypatch.setattr(cli.schedule_service, "install", install)
+    return calls
+
+
+def fake_schedule_remove(monkeypatch, removed=False):
+    calls = []
+
+    def remove():
+        calls.append(())
+        return removed
+
+    monkeypatch.setattr(cli.schedule_service, "remove", remove)
+    return calls
+
+
+def fake_schedule_status(monkeypatch, scan_installed=False, check_installed=False):
+    monkeypatch.setattr(
+        cli.schedule_service,
+        "status",
+        lambda: ScheduleStatus(scan_installed, check_installed),
+    )
+
+
+def test_schedule_install_help_mentions_the_target(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["schedule", "install", "--help"])
+    assert exc.value.code == 0
+    shown = " ".join(capsys.readouterr().out.split())
+    assert t("cli.schedule.target_help") in shown
+
+
+def test_schedule_without_an_action_is_an_error(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["schedule"])
+    assert exc.value.code == 2
+
+
+def test_schedule_install_passes_the_target_to_the_service(monkeypatch, capsys):
+    calls = fake_schedule_install(monkeypatch)
+    assert main(["schedule", "install", "C:"]) == 0
+    assert calls == ["C:"]
+    capsys.readouterr()
+
+
+def test_schedule_install_prints_a_confirmation_in_spanish(monkeypatch, capsys):
+    fake_schedule_install(monkeypatch)
+    assert main(["schedule", "install", "C:"]) == 0
+    assert capsys.readouterr().out == (
+        "Tareas programadas: C: se escaneará y se revisarán los avisos, todos los "
+        "días a las 09:00.\n"
+    )
+
+
+def test_schedule_install_errors_show_a_safe_target_and_exit_code_1(
+    monkeypatch, capsys
+):
+    fake_schedule_install(
+        monkeypatch, error=ScheduleError("not_fixed_disk", "Z:\\x\x1b[31m\nfalso")
+    )
+    assert main(["schedule", "install", "Z:\\x"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Solo se pueden escanear discos fijos" in captured.err
+    assert "Z:\\x?[31m?falso" in captured.err
+
+
+def test_schedule_remove_prints_removed_when_something_was_removed(monkeypatch, capsys):
+    calls = fake_schedule_remove(monkeypatch, removed=True)
+    assert main(["schedule", "remove"]) == 0
+    assert calls == [()]
+    assert capsys.readouterr().out == "Se quitaron las tareas programadas.\n"
+
+
+def test_schedule_remove_prints_not_installed_when_nothing_was_removed(
+    monkeypatch, capsys
+):
+    fake_schedule_remove(monkeypatch, removed=False)
+    assert main(["schedule", "remove"]) == 0
+    assert capsys.readouterr().out == "No había tareas programadas para quitar.\n"
+
+
+def test_schedule_status_prints_both_tasks_not_installed(monkeypatch, capsys):
+    fake_schedule_status(monkeypatch, scan_installed=False, check_installed=False)
+    assert main(["schedule", "status"]) == 0
+    assert capsys.readouterr().out == (
+        "Escaneo programado: no instalado.\nChequeo programado: no instalado.\n"
+    )
+
+
+def test_schedule_status_prints_both_tasks_installed(monkeypatch, capsys):
+    fake_schedule_status(monkeypatch, scan_installed=True, check_installed=True)
+    assert main(["schedule", "status"]) == 0
+    assert capsys.readouterr().out == (
+        "Escaneo programado: instalado.\nChequeo programado: instalado.\n"
+    )
 
 
 def test_output_never_crashes_on_characters_the_console_cannot_write(monkeypatch):

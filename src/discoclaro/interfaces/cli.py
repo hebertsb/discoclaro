@@ -31,13 +31,15 @@ from discoclaro.services import (
     growth_service,
     report_service,
     scan_service,
+    schedule_service,
 )
 from discoclaro.services.check_service import CheckError
 from discoclaro.services.growth_service import Growth, GrowthError
 from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
+from discoclaro.services.schedule_service import ScheduleError
 
-COMMANDS = ("scan", "report", "growth", "check")
+COMMANDS = ("scan", "report", "growth", "check", "schedule")
 EXIT_CANCELLED = 130
 PROGRESS_INTERVAL_S = 0.15
 
@@ -123,6 +125,20 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument(
                 "--json", action="store_true", help=t("cli.check.json_help")
             )
+        elif name == "schedule":
+            schedule_subparsers = subparser.add_subparsers(
+                dest="schedule_action", required=True
+            )
+            install_parser = schedule_subparsers.add_parser(
+                "install", help=t("cli.schedule.install_help")
+            )
+            install_parser.add_argument(
+                "target",
+                metavar=t("cli.schedule.target_name"),
+                help=t("cli.schedule.target_help"),
+            )
+            schedule_subparsers.add_parser("remove", help=t("cli.schedule.remove_help"))
+            schedule_subparsers.add_parser("status", help=t("cli.schedule.status_help"))
     return parser
 
 
@@ -138,6 +154,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _growth(args.target, args.since, args.top, args.json, args.by_category)
     if args.command == "check":
         return _check(args.json)
+    if args.command == "schedule":
+        return _schedule(args.schedule_action, getattr(args, "target", None))
     return 0
 
 
@@ -290,6 +308,44 @@ def _check(as_json: bool) -> int:
     else:
         for line in _check_lines(alerts):
             print(line)
+    return 0
+
+
+def _schedule(action: str, target: str | None) -> int:
+    """Instala, quita o consulta las tareas programadas, según `action`."""
+    try:
+        if action == "install":
+            schedule_service.install(target)
+            print(
+                t(
+                    "schedule.installed",
+                    target=safe_text(target),
+                    time=schedule_service.DEFAULT_START_TIME,
+                )
+            )
+        elif action == "remove":
+            removed = schedule_service.remove()
+            print(t("schedule.removed" if removed else "schedule.not_installed"))
+        else:
+            result = schedule_service.status()
+            print(
+                t(
+                    "schedule.status_scan_installed"
+                    if result.scan_installed
+                    else "schedule.status_scan_not_installed"
+                )
+            )
+            print(
+                t(
+                    "schedule.status_check_installed"
+                    if result.check_installed
+                    else "schedule.status_check_not_installed"
+                )
+            )
+    except ScheduleError as error:
+        message = t(f"errors.{error.kind}", target=safe_text(error.target))
+        print(message, file=sys.stderr)
+        return 1
     return 0
 
 
