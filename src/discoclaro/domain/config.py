@@ -45,7 +45,13 @@ class Config:
     budgets: Mapping[str, Budget] = field(default_factory=dict)
     growth: GrowthLimits = field(default_factory=GrowthLimits)
     min_display_gb: float = DEFAULT_MIN_DISPLAY_GB
+    disabled_alerts: frozenset[str] = frozenset()
 
     def min_display_bytes(self) -> int:
         """`min_display_gb` en bytes, para comparar directo con tamaños del escaneo."""
         return round(self.min_display_gb * GIB)
+
+    def is_alert_enabled(self, kind: str) -> bool:
+        """Si `kind` (uno de `ALERT_KINDS`) está activado: lo está salvo que se
+        haya apagado a propósito en `[alerts]`."""
+        return kind not in self.disabled_alerts

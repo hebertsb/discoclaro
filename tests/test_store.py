@@ -77,11 +77,11 @@ def count(store, table):
 
 def test_open_creates_the_schema_with_wal_and_foreign_keys(store):
     connection = store._connection
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
     assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     tables = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-    assert {row[0] for row in tables} == {"snapshots", "nodes", "large_files"}
+    assert {row[0] for row in tables} == {"snapshots", "nodes", "large_files", "alerts"}
     indexes = connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL"
     )
@@ -142,6 +142,35 @@ def test_large_files_are_deleted_with_their_snapshot(store):
     )
     store._connection.execute("DELETE FROM snapshots WHERE id = ?", (snapshot_id,))
     assert store.large_files(snapshot_id) == []
+
+
+def test_an_alert_never_fired_has_no_last_time(store):
+    assert store.last_alert_at("volume_low_free", "C:") is None
+
+
+def test_recording_an_alert_can_be_read_back(store):
+    fired_at = T0
+    store.record_alert("volume_low_free", "C:", fired_at)
+    assert store.last_alert_at("volume_low_free", "C:") == fired_at
+
+
+def test_recording_the_same_alert_again_replaces_its_time(store):
+    store.record_alert("volume_low_free", "C:", T0)
+    later = T0 + timedelta(hours=1)
+    store.record_alert("volume_low_free", "C:", later)
+    assert store.last_alert_at("volume_low_free", "C:") == later
+
+
+def test_different_kinds_or_targets_are_tracked_separately(store):
+    store.record_alert("volume_low_free", "C:", T0)
+    assert store.last_alert_at("volume_near_limit", "C:") is None
+    assert store.last_alert_at("volume_low_free", "D:") is None
+
+
+def test_an_alert_time_is_stored_in_utc_and_comes_back_equal(store):
+    local = T0.astimezone(timezone(timedelta(hours=-3)))
+    store.record_alert("volume_low_free", "C:", local)
+    assert store.last_alert_at("volume_low_free", "C:") == local
 
 
 def test_time_is_stored_in_utc_and_comes_back_equal(store):
@@ -265,7 +294,7 @@ def test_hostile_names_are_stored_and_recovered_verbatim_and_the_tables_survive(
     tables = store._connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table'"
     )
-    assert {row[0] for row in tables} == {"snapshots", "nodes", "large_files"}
+    assert {row[0] for row in tables} == {"snapshots", "nodes", "large_files", "alerts"}
     assert count(store, "snapshots") == 1
     assert count(store, "nodes") == len(HOSTILE)
     assert store.save_snapshot(make_snapshot(), make_nodes()) == snapshot_id + 1
@@ -412,7 +441,7 @@ def test_a_version_1_database_is_migrated_keeping_its_photos(db_path):
         assert (old.id, old.scanned_bytes, old.duplicate_bytes) == (1, 300, 0)
         store.save_snapshot(make_snapshot(duplicate_bytes=50), [])
         assert store.snapshots("C:")[0].duplicate_bytes == 50
-    assert raw_query(db_path, "PRAGMA user_version") == [(3,)]
+    assert raw_query(db_path, "PRAGMA user_version") == [(4,)]
 
 
 def test_migrations_are_applied_one_version_at_a_time(db_path, monkeypatch):

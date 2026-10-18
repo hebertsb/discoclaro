@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from discoclaro import __version__, i18n
+from discoclaro.domain.alerts import Alert
 from discoclaro.domain.categories import CategoryTotal
 from discoclaro.domain.formatting import format_table
 from discoclaro.domain.growth import CategoryGrowth, FolderGrowth
@@ -21,6 +22,7 @@ from discoclaro.i18n import t
 from discoclaro.interfaces import cli
 from discoclaro.interfaces.cli import COMMANDS, main
 from discoclaro.services import growth_service, report_service
+from discoclaro.services.check_service import CheckError
 from discoclaro.services.growth_service import Growth, GrowthError
 from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
@@ -1081,6 +1083,109 @@ def test_growth_with_no_snapshots_at_all_is_reported(monkeypatch, capsys):
         "No hay ninguna foto guardada todavía. Corre `discoclaro scan <disco>` "
         "primero.\n"
     )
+
+
+def fake_run_check(monkeypatch, alerts=None, error=None):
+    """Reemplaza el servicio de chequeo; devuelve cuántas veces se llamó."""
+    calls = []
+
+    def run_check():
+        calls.append(())
+        if error:
+            raise error
+        return alerts if alerts is not None else []
+
+    monkeypatch.setattr(cli.check_service, "run_check", run_check)
+    return calls
+
+
+def test_check_help_mentions_the_json_option(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["check", "--help"])
+    assert exc.value.code == 0
+    shown = " ".join(capsys.readouterr().out.split())
+    assert "--json" in shown
+    assert t("cli.check.json_help") in shown
+
+
+def test_check_calls_the_service_with_no_arguments(monkeypatch, capsys):
+    calls = fake_run_check(monkeypatch, [])
+    assert main(["check"]) == 0
+    assert calls == [()]
+    capsys.readouterr()
+
+
+def test_check_with_no_alerts_says_there_is_nothing_to_notify(monkeypatch, capsys):
+    fake_run_check(monkeypatch, [])
+    assert main(["check"]) == 0
+    assert capsys.readouterr().out == "Nada que avisar.\n"
+
+
+def test_check_prints_a_table_of_what_was_notified_in_spanish(monkeypatch, capsys):
+    alert = Alert(
+        kind="volume_low_free",
+        target="C:",
+        measured_bytes=1 * GIB,
+        limit_bytes=40 * GIB,
+    )
+    fake_run_check(monkeypatch, [alert])
+    assert main(["check"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    table = format_table(
+        ["Aviso", "Qué", "Detalle"],
+        [
+            [
+                "Poco espacio libre",
+                "C:",
+                "A C: le quedan 1,0 GiB libres (el mínimo configurado es 40,0 GiB).",
+            ]
+        ],
+        align=("l", "l", "l"),
+    )
+    assert lines[: len(table)] == table
+    assert lines[len(table)] == "Se avisó de 1 cosas."
+
+
+def test_check_json_has_the_expected_fields(monkeypatch, capsys):
+    alert = Alert(
+        kind="volume_near_limit", target="C:", measured_percent=90.0, limit_percent=85.0
+    )
+    fake_run_check(monkeypatch, [alert])
+    assert main(["check", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data == [
+        {
+            "kind": "volume_near_limit",
+            "target": "C:",
+            "measured_bytes": 0,
+            "limit_bytes": 0,
+            "measured_percent": 90.0,
+            "limit_percent": 85.0,
+        }
+    ]
+
+
+def test_check_without_any_snapshot_is_reported(monkeypatch, capsys):
+    fake_run_check(monkeypatch, error=CheckError("check_no_snapshots"))
+    assert main(["check"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "No hay ninguna foto guardada todavía. Corre `discoclaro scan <disco>` "
+        "primero.\n"
+    )
+
+
+def test_check_errors_show_a_safe_target_and_exit_code_1(monkeypatch, capsys):
+    fake_run_check(
+        monkeypatch,
+        error=CheckError("cannot_open_database", "D:\\x\x1b[31m\nfalso"),
+    )
+    assert main(["check"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "No se pudo abrir la base de datos de discoclaro: " in captured.err
+    assert "D:\\x?[31m?falso" in captured.err
 
 
 def test_output_never_crashes_on_characters_the_console_cannot_write(monkeypatch):

@@ -9,6 +9,7 @@ import re
 import tomllib
 from pathlib import Path
 
+from discoclaro.domain.alerts import ALERT_KINDS
 from discoclaro.domain.config import (
     DEFAULT_MIN_DISPLAY_GB,
     DEFAULT_WARN_AT_PERCENT,
@@ -51,6 +52,7 @@ def load_config_from_text(text: str, source: str = "<texto>") -> Config:
             min_display_gb=(
                 DEFAULT_MIN_DISPLAY_GB if min_display_gb is None else min_display_gb
             ),
+            disabled_alerts=_build_disabled_alerts(data.get("alerts", {})),
         )
     except ValueError as error:
         raise ConfigError(f"{source}: {error}") from error
@@ -135,6 +137,20 @@ def _build_growth(raw: object) -> GrowthLimits:
         max_growth_gb=_optional_number(raw, "max_growth_gb", "growth"),
         new_file_gb=_optional_number(raw, "new_file_gb", "growth"),
     )
+
+
+def _build_disabled_alerts(raw: object) -> frozenset[str]:
+    if not isinstance(raw, dict):
+        raise ValueError("'alerts' must be a table")
+    disabled = set()
+    for kind, enabled in raw.items():
+        if kind not in ALERT_KINDS:
+            raise ValueError(f"alerts.{kind!r} is not a known alert kind")
+        if not isinstance(enabled, bool):
+            raise ValueError(f"alerts.{kind} must be true or false")
+        if not enabled:
+            disabled.add(kind)
+    return frozenset(disabled)
 
 
 def _optional_number(

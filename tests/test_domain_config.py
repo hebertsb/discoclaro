@@ -50,3 +50,15 @@ def test_two_configs_with_the_same_values_are_equal():
     first = Config(volumes={"C:": VolumeLimit(min_free_gb=40)})
     second = Config(volumes={"C:": VolumeLimit(min_free_gb=40)})
     assert first == second
+
+
+def test_a_default_config_has_every_alert_enabled():
+    config = Config()
+    assert config.disabled_alerts == frozenset()
+    assert config.is_alert_enabled("big_new_file") is True
+
+
+def test_an_alert_in_disabled_alerts_is_not_enabled():
+    config = Config(disabled_alerts=frozenset({"big_new_file"}))
+    assert config.is_alert_enabled("big_new_file") is False
+    assert config.is_alert_enabled("budget_exceeded") is True

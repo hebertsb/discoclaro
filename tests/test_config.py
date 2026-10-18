@@ -96,12 +96,37 @@ def test_unknown_keys_are_ignored_for_forward_compatibility():
     assert config.volumes == {"C:": VolumeLimit()}
 
 
+def test_every_alert_is_enabled_without_an_alerts_section():
+    assert load_config_from_text("").disabled_alerts == frozenset()
+
+
+def test_an_alert_set_to_false_is_disabled():
+    config = load_config_from_text("[alerts]\nbig_new_file = false\n")
+    assert config.disabled_alerts == frozenset({"big_new_file"})
+
+
+def test_an_alert_set_to_true_stays_enabled():
+    config = load_config_from_text("[alerts]\nbig_new_file = true\n")
+    assert config.disabled_alerts == frozenset()
+
+
+def test_an_unknown_alert_kind_is_rejected():
+    with pytest.raises(ConfigError):
+        load_config_from_text("[alerts]\nnot_a_real_kind = false\n")
+
+
+def test_an_alert_value_that_is_not_a_boolean_is_rejected():
+    with pytest.raises(ConfigError):
+        load_config_from_text("[alerts]\nbig_new_file = 1\n")
+
+
 @pytest.mark.parametrize(
     "text",
     [
         "volumes = 1",
         "budgets = 1",
         "growth = 1",
+        "alerts = 1",
         '[volumes]\n"C:" = 1',
         '[budgets]\n"x" = 1',
     ],

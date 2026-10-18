@@ -5,8 +5,8 @@ dependencia comprometida; ver [MODELO_DE_AMENAZAS.md](MODELO_DE_AMENAZAS.md), am
 
 ## Política
 
-- **Biblioteca estándar primero.** Hoy discoclaro no tiene dependencias de ejecución. Antes de
-  agregar cualquiera se pregunta si la biblioteca estándar alcanza.
+- **Biblioteca estándar primero.** Antes de agregar cualquier dependencia de ejecución se pregunta
+  si la biblioteca estándar alcanza, y se pide aprobación explícita antes de agregarla.
 - **Versión exacta (`==`) siempre.** Nunca rangos (`>=`, `~=`, `^`, `*`).
 - **Hashes.** Los archivos de requisitos llevan el hash `sha256` de cada archivo, y se instalan con
   `pip install --require-hashes`. Si un archivo no coincide, pip se niega a instalarlo.
@@ -23,6 +23,8 @@ trae hashes.
 | Archivo | Qué contiene |
 |---|---|
 | `pyproject.toml` | Dependencias de ejecución (`dependencies`) y backend de construcción (`build-system`), con `==` |
+| `requirements-runtime.in` | Las mismas dependencias de ejecución de `pyproject.toml`, directas, con `==` |
+| `requirements-runtime.txt` | Generado desde el `.in`: todas sus dependencias transitivas, con hashes; es lo que se instala verificado (`pip install --require-hashes -r requirements-runtime.txt`) |
 | `requirements-dev.in` | Herramientas de desarrollo directas (pruebas y revisión de estilo), con `==` |
 | `requirements-dev.txt` | Generado desde el `.in`: todas las dependencias, transitivas incluidas, con hashes |
 | `requirements-audit.in` | La herramienta de auditoría directa, con `==` |
@@ -34,17 +36,25 @@ Los `.txt` no se editan a mano: se regeneran.
 
 ```
 py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-dev.txt
+.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-runtime.txt -r requirements-dev.txt
+```
+
+Para instalar solo discoclaro, verificado, sin herramientas de desarrollo:
+
+```
+.venv\Scripts\python.exe -m pip install --require-hashes -r requirements-runtime.txt
+.venv\Scripts\python.exe -m pip install --no-deps -e .
 ```
 
 ## Agregar o actualizar una dependencia
 
-1. Editar el archivo `.in` (o `pyproject.toml`) con la versión exacta.
+1. Editar el archivo `.in` que corresponda (`requirements-runtime.in` para una dependencia de
+   ejecución) y, si es de ejecución, también `pyproject.toml`, con la versión exacta.
 2. Regenerar el `.txt` con [uv](https://docs.astral.sh/uv/), que es una herramienta de desarrollo
    y no una dependencia del proyecto:
 
    ```
-   uv pip compile requirements-dev.in --universal --python-version 3.12 --generate-hashes -o requirements-dev.txt
+   uv pip compile requirements-runtime.in --universal --python-version 3.12 --generate-hashes -o requirements-runtime.txt
    ```
 
    `--universal` registra los hashes de todas las plataformas, no solo los de la máquina que lo

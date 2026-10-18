@@ -11,6 +11,7 @@ import time
 from collections.abc import Sequence
 
 from discoclaro import __version__
+from discoclaro.domain.alerts import Alert
 from discoclaro.domain.formatting import (
     format_bytes,
     format_decimal,
@@ -25,16 +26,18 @@ from discoclaro.domain.unexplained import Unexplained
 from discoclaro.i18n import t
 from discoclaro.platform import windows
 from discoclaro.services import (
+    check_service,
     elevation_service,
     growth_service,
     report_service,
     scan_service,
 )
+from discoclaro.services.check_service import CheckError
 from discoclaro.services.growth_service import Growth, GrowthError
 from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
 
-COMMANDS = ("scan", "report", "growth")
+COMMANDS = ("scan", "report", "growth", "check")
 EXIT_CANCELLED = 130
 PROGRESS_INTERVAL_S = 0.15
 
@@ -116,6 +119,10 @@ def build_parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help=t("cli.growth.by_category_help"),
             )
+        elif name == "check":
+            subparser.add_argument(
+                "--json", action="store_true", help=t("cli.check.json_help")
+            )
     return parser
 
 
@@ -129,6 +136,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _report(args.target, args.top, args.json, args.by_category)
     if args.command == "growth":
         return _growth(args.target, args.since, args.top, args.json, args.by_category)
+    if args.command == "check":
+        return _check(args.json)
     return 0
 
 
@@ -262,6 +271,55 @@ def _growth(
         for line in _growth_lines(growth):
             print(line)
     return 0
+
+
+def _check(as_json: bool) -> int:
+    """Evalúa y notifica los avisos configurados, y muestra cuáles se avisaron."""
+    try:
+        alerts = check_service.run_check()
+    except CheckError as error:
+        message = t(f"errors.{error.kind}", target=safe_text(error.target))
+        print(message, file=sys.stderr)
+        return 1
+    if as_json:
+        print(
+            json.dumps(
+                [_alert_to_json(a) for a in alerts], ensure_ascii=False, indent=2
+            )
+        )
+    else:
+        for line in _check_lines(alerts):
+            print(line)
+    return 0
+
+
+def _check_lines(alerts: list[Alert]) -> list[str]:
+    """Las líneas del chequeo: una tabla con lo que se avisó, o que no hubo nada."""
+    if not alerts:
+        return [t("check.none_found")]
+    headers = [
+        t("check.column_title"),
+        t("check.column_target"),
+        t("check.column_detail"),
+    ]
+    rows = []
+    for alert in alerts:
+        title, message = check_service.format_alert_text(alert)
+        rows.append([safe_text(title), safe_text(alert.target), safe_text(message)])
+    lines = format_table(headers, rows, align=("l", "l", "l"))
+    lines.append(t("check.shown", shown=_number(len(alerts))))
+    return lines
+
+
+def _alert_to_json(alert: Alert) -> dict[str, object]:
+    return {
+        "kind": alert.kind,
+        "target": alert.target,
+        "measured_bytes": alert.measured_bytes,
+        "limit_bytes": alert.limit_bytes,
+        "measured_percent": alert.measured_percent,
+        "limit_percent": alert.limit_percent,
+    }
 
 
 def _size(value: int) -> str:

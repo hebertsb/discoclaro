@@ -1,4 +1,4 @@
-"""Base de datos de las fotos (SQLite): tablas `snapshots`, `nodes` y `large_files`.
+"""Base de datos de las fotos (SQLite): `snapshots`, `nodes`, `large_files` y `alerts`.
 
 Reglas (amenaza 3 del modelo de amenazas):
 
@@ -90,6 +90,22 @@ MIGRATIONS = (
             "PRAGMA user_version = 3",
         ),
     ),
+    (
+        4,
+        (
+            # Para no repetir el mismo aviso en menos de 24 h (T2.7): una fila por
+            # par (kind, target) con la última vez que se avisó.
+            """
+            CREATE TABLE alerts (
+                kind TEXT NOT NULL,
+                target TEXT NOT NULL,
+                fired_at TEXT NOT NULL,
+                PRIMARY KEY (kind, target)
+            )
+            """,
+            "PRAGMA user_version = 4",
+        ),
+    ),
 )
 
 _INSERT_SNAPSHOT = """
@@ -147,6 +163,13 @@ _SELECT_LARGE_FILES = """
     FROM large_files
     WHERE snapshot_id = ?
     ORDER BY path, rowid
+"""
+
+_SELECT_ALERT = "SELECT fired_at FROM alerts WHERE kind = ? AND target = ?"
+
+_UPSERT_ALERT = """
+    INSERT INTO alerts (kind, target, fired_at) VALUES (?, ?, ?)
+    ON CONFLICT (kind, target) DO UPDATE SET fired_at = excluded.fired_at
 """
 
 # En Python, un sustituto suelto (UTF-16 inválido) es siempre un carácter solo.
@@ -304,6 +327,24 @@ class Store:
         return [
             LargeFile(path=path, size_bytes=size_bytes) for path, size_bytes in rows
         ]
+
+    def last_alert_at(self, kind: str, target: str) -> datetime | None:
+        """Cuándo se avisó por última vez de `kind` en `target`, o `None` si nunca."""
+        row = self._connection.execute(
+            _SELECT_ALERT, (_clean(kind), _clean(target))
+        ).fetchone()
+        return None if row is None else datetime.fromisoformat(row[0])
+
+    def record_alert(self, kind: str, target: str, fired_at: datetime) -> None:
+        """Guarda que `kind` en `target` se avisó en `fired_at` (una fila por par)."""
+        self._connection.execute(
+            _UPSERT_ALERT,
+            (
+                _clean(kind),
+                _clean(target),
+                fired_at.astimezone(UTC).isoformat(timespec="microseconds"),
+            ),
+        )
 
 
 def _clean(text: str) -> str:

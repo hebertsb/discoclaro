@@ -8,6 +8,7 @@ description = "Explains why your disk is filling up."
 scan = "Scans a disk or a folder and saves a snapshot."
 report = "Shows a report of what takes up space."
 growth = "Compares two snapshots and shows what grew."
+check = "Evaluates the configured alerts and notifies the ones that apply."
 
 [cli.scan]
 target_name = "TARGET"
@@ -30,6 +31,9 @@ since_help = "How old the snapshot to compare with must be: a number and d, h or
 top_help = "How many folders (or categories) to show, from the one that grew the most to the one that shrank the most (20 by default)."
 json_help = "Show the result as JSON instead of a table."
 by_category_help = "Groups by category from the rule catalog instead of showing loose folders."
+
+[cli.check]
+json_help = "Show the result as JSON instead of a table."
 
 [format]
 decimal_separator = "."
@@ -74,6 +78,27 @@ new_files_title = "New large files:"
 column_file = "File"
 column_size = "Size"
 
+[check]
+column_title = "Alert"
+column_target = "What"
+column_detail = "Detail"
+shown = "Notified about {shown} things."
+none_found = "Nothing to notify."
+
+[alerts]
+title_volume_low_free = "Low free space"
+title_volume_near_limit = "Disk almost full"
+title_budget_near = "Budget almost full"
+title_budget_exceeded = "Budget exceeded"
+title_big_new_file = "New large file"
+title_unexplained_grew = "Unexplained space grew"
+message_volume_low_free = "{target} has {measured} left (the configured minimum is {limit})."
+message_volume_near_limit = "{target} already used {measured} % (the alert is set at {limit} %)."
+message_budget_near = "{target} already uses {measured} of a {limit} budget."
+message_budget_exceeded = "{target} went over its budget: it uses {measured} of {limit}."
+message_big_new_file = "New file of {measured}: {target}."
+message_unexplained_grew = "The unexplained space of {target} grew {measured} (the limit is {limit})."
+
 [admin]
 announce = "Administrator permission will be requested to scan {target} in read-only mode. Windows will show its own permission window."
 command = "Command Windows will receive: {command}"
@@ -100,3 +125,4 @@ growth_no_snapshots = "There is no snapshot saved yet. Run `discoclaro scan <dis
 growth_no_snapshot_for_target = "There is no snapshot saved of {target}. Run `discoclaro scan {target}` first."
 growth_invalid_since = "\"{target}\" is not a valid age: a number and d, h or w, for example 7d."
 growth_not_enough_history = "There is no snapshot of {target} old enough to compare with. Wait longer between scans, or try a smaller --since."
+check_no_snapshots = "There is no snapshot saved yet. Run `discoclaro scan <disk>` first."

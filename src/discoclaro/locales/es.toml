@@ -8,6 +8,7 @@ description = "Explica por qué se llena tu disco."
 scan = "Escanea un disco o una carpeta y guarda una foto."
 report = "Muestra un informe de lo que ocupa espacio."
 growth = "Compara dos fotos y muestra qué creció."
+check = "Evalúa los avisos configurados y notifica los que correspondan."
 
 [cli.scan]
 target_name = "DESTINO"
@@ -30,6 +31,9 @@ since_help = "Qué tan vieja tiene que ser la foto con la que se compara: un nú
 top_help = "Cuántas carpetas (o categorías) mostrar, de la que más creció a la que más encogió (20 por defecto)."
 json_help = "Muestra el resultado en JSON en vez de en una tabla."
 by_category_help = "Agrupa por categoría del catálogo de reglas en vez de mostrar carpetas sueltas."
+
+[cli.check]
+json_help = "Muestra el resultado en JSON en vez de en una tabla."
 
 [format]
 decimal_separator = ","
@@ -74,6 +78,27 @@ new_files_title = "Archivos grandes nuevos:"
 column_file = "Archivo"
 column_size = "Tamaño"
 
+[check]
+column_title = "Aviso"
+column_target = "Qué"
+column_detail = "Detalle"
+shown = "Se avisó de {shown} cosas."
+none_found = "Nada que avisar."
+
+[alerts]
+title_volume_low_free = "Poco espacio libre"
+title_volume_near_limit = "Disco casi lleno"
+title_budget_near = "Presupuesto casi lleno"
+title_budget_exceeded = "Presupuesto superado"
+title_big_new_file = "Archivo nuevo grande"
+title_unexplained_grew = "Creció lo no explicado"
+message_volume_low_free = "A {target} le quedan {measured} libres (el mínimo configurado es {limit})."
+message_volume_near_limit = "{target} ya usó el {measured} % (el aviso es al llegar al {limit} %)."
+message_budget_near = "{target} ya ocupa {measured} de un presupuesto de {limit}."
+message_budget_exceeded = "{target} superó su presupuesto: ocupa {measured} de {limit}."
+message_big_new_file = "Archivo nuevo de {measured}: {target}."
+message_unexplained_grew = "Lo no explicado de {target} creció {measured} (el límite es {limit})."
+
 [admin]
 announce = "Se pedirá permiso de administrador para escanear {target} en modo solo lectura. Windows mostrará su propia ventana de permisos."
 command = "Orden que recibirá Windows: {command}"
@@ -100,3 +125,4 @@ growth_no_snapshots = "No hay ninguna foto guardada todavía. Corre `discoclaro 
 growth_no_snapshot_for_target = "No hay ninguna foto guardada de {target}. Corre `discoclaro scan {target}` primero."
 growth_invalid_since = "«{target}» no es una antigüedad válida: un número y d, h o w, por ejemplo 7d."
 growth_not_enough_history = "No hay ninguna foto de {target} lo bastante vieja para comparar. Esperá más tiempo entre escaneos, o probá con un --since más chico."
+check_no_snapshots = "No hay ninguna foto guardada todavía. Corre `discoclaro scan <disco>` primero."
