@@ -76,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument(
                 "--json", action="store_true", help=t("cli.report.json_help")
             )
+            subparser.add_argument(
+                "--by-category",
+                action="store_true",
+                help=t("cli.report.by_category_help"),
+            )
     return parser
 
 
@@ -86,7 +91,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "scan":
         return _scan(args.target, args.admin, args.restart)
     if args.command == "report":
-        return _report(args.target, args.top, args.json)
+        return _report(args.target, args.top, args.json, args.by_category)
     return 0
 
 
@@ -186,10 +191,10 @@ def _scan(target: str, admin: bool = False, restart: bool = False) -> int:
     return 0
 
 
-def _report(target: str | None, top_n: int, as_json: bool) -> int:
+def _report(target: str | None, top_n: int, as_json: bool, by_category: bool) -> int:
     """Arma el informe de una foto ya guardada y lo muestra en tabla o en JSON."""
     try:
-        report = report_service.run_report(target, top_n=top_n)
+        report = report_service.run_report(target, top_n=top_n, by_category=by_category)
     except ReportError as error:
         message = t(f"errors.{error.kind}", target=safe_text(error.target))
         print(message, file=sys.stderr)
@@ -269,23 +274,38 @@ def _report_lines(report: Report) -> list[str]:
             id=snapshot.id,
         )
     ]
-    headers = [
-        t("report.column_path"),
-        t("report.column_size"),
-        t("report.column_files"),
-    ]
-    rows = [
-        [safe_text(node.path), _size(node.size_bytes), _number(node.n_files)]
-        for node in report.top_folders
-    ]
-    lines.extend(format_table(headers, rows, align=("l", "r", "r")))
-    lines.append(
-        t(
-            "report.shown",
-            shown=_number(len(report.top_folders)),
-            total=_number(report.total_folders),
+    if report.by_category is not None:
+        headers = [
+            t("report.column_category"),
+            t("report.column_size"),
+            t("report.column_folders"),
+        ]
+        rows = [
+            [safe_text(total.category), _size(total.size_bytes), _number(total.folders)]
+            for total in report.by_category
+        ]
+        lines.extend(format_table(headers, rows, align=("l", "r", "r")))
+        lines.append(
+            t("report.shown_categories", shown=_number(len(report.by_category)))
         )
-    )
+    else:
+        headers = [
+            t("report.column_path"),
+            t("report.column_size"),
+            t("report.column_files"),
+        ]
+        rows = [
+            [safe_text(node.path), _size(node.size_bytes), _number(node.n_files)]
+            for node in report.top_folders
+        ]
+        lines.extend(format_table(headers, rows, align=("l", "r", "r")))
+        lines.append(
+            t(
+                "report.shown",
+                shown=_number(len(report.top_folders)),
+                total=_number(report.total_folders),
+            )
+        )
     if report.unexplained is not None:
         lines.extend(
             _unexplained_lines(report.unexplained, snapshot.is_admin, snapshot.volume)
@@ -311,6 +331,16 @@ def _report_to_json(report: Report) -> dict[str, object]:
         "unreadable_count": snapshot.unreadable_count,
         "total_folders": report.total_folders,
         "top_folders": [_node_to_json(node) for node in report.top_folders],
+        "by_category": None
+        if report.by_category is None
+        else [
+            {
+                "category": total.category,
+                "size_bytes": total.size_bytes,
+                "folders": total.folders,
+            }
+            for total in report.by_category
+        ],
         "unexplained": None
         if unexplained is None
         else {

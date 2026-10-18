@@ -20,6 +20,7 @@ target_name = "TARGET"
 target_help = "Disk or folder already scanned before (for example C:); if missing, uses the latest snapshot of any of them."
 top_help = "How many folders to show, largest first (20 by default)."
 json_help = "Show the result as JSON instead of a table."
+by_category_help = "Groups by category from the rule catalog instead of showing loose folders."
 
 [format]
 decimal_separator = "."
@@ -46,7 +47,10 @@ title = "Largest folders of {target}, snapshot of {taken_at} (no. {id})."
 column_path = "Folder"
 column_size = "Size"
 column_files = "Files"
+column_category = "Category"
+column_folders = "Folders"
 shown = "Showing {shown} of {total} folders stored."
+shown_categories = "Showing {shown} categories."
 
 [admin]
 announce = "Administrator permission will be requested to scan {target} in read-only mode. Windows will show its own permission window."

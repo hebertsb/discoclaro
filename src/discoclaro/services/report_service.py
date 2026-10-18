@@ -7,13 +7,16 @@ se haya escaneado antes.
 
 import ntpath
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from discoclaro.adapters.rules import load_builtin_catalog
 from discoclaro.adapters.store import Store, StoreError
 from discoclaro.adapters.volumes import list_volumes
+from discoclaro.domain.categories import CategoryTotal, category_totals
 from discoclaro.domain.models import Node, Snapshot, Volume
+from discoclaro.domain.rules import Rule
 from discoclaro.domain.unexplained import (
     DEFAULT_THRESHOLD_PERCENT,
     Unexplained,
@@ -41,12 +44,17 @@ class ReportError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Report:
-    """Lo que se muestra de una foto guardada: su resumen y sus carpetas más grandes."""
+    """Lo que se muestra de una foto guardada: su resumen y sus carpetas más grandes.
+
+    `by_category` es `None` si no se pidió (el modo normal, por carpeta); si se pidió
+    con `--by-category`, trae los totales por categoría en vez de las carpetas.
+    """
 
     snapshot: Snapshot
     top_folders: tuple[Node, ...]
     total_folders: int
     unexplained: Unexplained | None
+    by_category: tuple[CategoryTotal, ...] | None = None
 
 
 def _resolved_name(target: str, volumes: Callable[[], list[Volume]]) -> str:
@@ -65,11 +73,16 @@ def build_report(
     volumes: Callable[[], list[Volume]] = list_volumes,
     top_n: int = DEFAULT_TOP_N,
     threshold_percent: float = DEFAULT_THRESHOLD_PERCENT,
+    by_category: bool = False,
+    rules: Callable[[], Sequence[Rule]] = load_builtin_catalog,
+    environment: Callable[[], Mapping[str, str]] = windows.environment_variables,
 ) -> Report:
     """El informe de la foto de `target`, o de la más reciente de todas si falta.
 
     Lanza `ReportError` si no hay ninguna foto guardada (de ese destino, o de ningún
-    destino). No toca el disco si `target` es `None`.
+    destino). No toca el disco si `target` es `None`. `rules` y `environment` solo se
+    llaman cuando `by_category` es cierto (T2.4): leer el catálogo y las variables de
+    entorno reales no hace falta para el informe normal, por carpeta.
     """
     if target is None:
         snapshots = store.snapshots()
@@ -84,16 +97,26 @@ def build_report(
         snapshot = found
     nodes = store.nodes(snapshot.id)
     top = tuple(sorted(nodes, key=lambda node: node.size_bytes, reverse=True))
+    by_category_totals = None
+    if by_category:
+        by_category_totals = category_totals(nodes, rules(), environment())[
+            : max(top_n, 0)
+        ]
     return Report(
         snapshot=snapshot,
         top_folders=top[: max(top_n, 0)],
         total_folders=len(nodes),
         unexplained=unexplained_of(snapshot, threshold_percent),
+        by_category=by_category_totals,
     )
 
 
 def run_report(
-    target: str | None, data_dir: Path | None = None, *, top_n: int = DEFAULT_TOP_N
+    target: str | None,
+    data_dir: Path | None = None,
+    *,
+    top_n: int = DEFAULT_TOP_N,
+    by_category: bool = False,
 ) -> Report:
     """Arma el informe leyendo la base propia de discoclaro, sin volver a escanear.
 
@@ -109,4 +132,4 @@ def run_report(
     except (OSError, sqlite3.Error, StoreError) as error:
         raise ReportError("cannot_open_database", str(error)) from error
     with store:
-        return build_report(target, store, top_n=top_n)
+        return build_report(target, store, top_n=top_n, by_category=by_category)

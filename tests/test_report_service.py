@@ -11,9 +11,12 @@ from datetime import UTC, datetime
 
 import pytest
 
+from discoclaro.adapters.rules import load_builtin_catalog
 from discoclaro.adapters.store import Store
 from discoclaro.adapters.volumes import list_volumes
+from discoclaro.domain.categories import CategoryTotal
 from discoclaro.domain.models import Node, Snapshot, Volume
+from discoclaro.domain.rules import Rule
 from discoclaro.domain.unexplained import Unexplained
 from discoclaro.platform import windows
 from discoclaro.services import report_service
@@ -140,6 +143,83 @@ def test_no_target_never_asks_for_the_volumes(store):
     build_report(None, store, volumes=forbidden)
 
 
+def test_by_category_is_none_when_not_asked_for(store):
+    save(store, "C:", [Node("C:\\a", None, 10, 1, 0)])
+    report = build_report("C:", store, volumes=fake_volumes)
+    assert report.by_category is None
+
+
+def test_by_category_groups_matching_nodes(store):
+    save(
+        store,
+        "C:",
+        [
+            Node("C:\\a\\cache", "C:\\a", 100, 1, 1),
+            Node("C:\\a", None, 100, 1, 0),
+        ],
+    )
+    pip_cache = Rule(
+        id="pip-cache",
+        name="pip",
+        paths=("C:\\a\\cache",),
+        category="cache",
+        risk="safe",
+        explanation="x",
+    )
+    report = build_report(
+        "C:",
+        store,
+        volumes=fake_volumes,
+        by_category=True,
+        rules=lambda: [pip_cache],
+        environment=dict,
+    )
+    assert report.by_category == (
+        CategoryTotal(category="cache", size_bytes=100, folders=1),
+    )
+
+
+def test_by_category_is_limited_by_top_n(store):
+    nodes = [
+        Node(f"C:\\{letter}", None, size, 1, 0)
+        for letter, size in zip("abc", [30, 20, 10], strict=True)
+    ]
+    save(store, "C:", nodes)
+    rules = [
+        Rule(
+            id=n.path,
+            name=n.path,
+            paths=(n.path,),
+            category=n.path,
+            risk="safe",
+            explanation="x",
+        )
+        for n in nodes
+    ]
+    report = build_report(
+        "C:",
+        store,
+        volumes=fake_volumes,
+        by_category=True,
+        top_n=2,
+        rules=lambda: rules,
+        environment=dict,
+    )
+    assert len(report.by_category) == 2
+    assert report.by_category[0].size_bytes == 30
+
+
+def test_rules_and_environment_are_not_called_when_by_category_is_false(store):
+    save(store, "C:", [Node("C:\\a", None, 10, 1, 0)])
+
+    def forbidden():
+        raise AssertionError("no debería armar el catálogo ni el entorno")
+
+    build_report(
+        "C:", store, volumes=fake_volumes, rules=forbidden, environment=forbidden
+    )
+
+
 def test_raises_when_there_are_no_snapshots_at_all(store):
     with pytest.raises(ReportError) as error:
         build_report(None, store, volumes=fake_volumes)
@@ -170,6 +250,8 @@ def test_report_error_carries_the_message_key_and_the_target():
 def test_the_real_volumes_adapter_is_the_default_without_calling_it():
     parameters = inspect.signature(build_report).parameters
     assert parameters["volumes"].default is list_volumes
+    assert parameters["rules"].default is load_builtin_catalog
+    assert parameters["environment"].default is windows.environment_variables
 
 
 def test_run_report_says_there_are_no_snapshots_when_the_database_file_is_missing(

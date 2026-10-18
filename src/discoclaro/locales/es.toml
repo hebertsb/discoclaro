@@ -20,6 +20,7 @@ target_name = "DESTINO"
 target_help = "Disco o carpeta ya escaneados antes (por ejemplo C:); si falta, usa la última foto guardada de cualquiera."
 top_help = "Cuántas carpetas mostrar, de mayor a menor tamaño (20 por defecto)."
 json_help = "Muestra el resultado en JSON en vez de en una tabla."
+by_category_help = "Agrupa por categoría del catálogo de reglas en vez de mostrar carpetas sueltas."
 
 [format]
 decimal_separator = ","
@@ -46,7 +47,10 @@ title = "Carpetas más grandes de {target}, foto del {taken_at} (n.º {id})."
 column_path = "Carpeta"
 column_size = "Tamaño"
 column_files = "Archivos"
+column_category = "Categoría"
+column_folders = "Carpetas"
 shown = "Se muestran {shown} de {total} carpetas guardadas."
+shown_categories = "Se muestran {shown} categorías."
 
 [admin]
 announce = "Se pedirá permiso de administrador para escanear {target} en modo solo lectura. Windows mostrará su propia ventana de permisos."

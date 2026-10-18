@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from discoclaro import __version__, i18n
+from discoclaro.domain.categories import CategoryTotal
 from discoclaro.domain.formatting import format_table
 from discoclaro.domain.models import Node, ScanProgress, Snapshot, SystemFile
 from discoclaro.domain.unexplained import compute_unexplained
@@ -635,11 +636,12 @@ def make_report(**changes):
 
 
 def fake_run_report(monkeypatch, report=None, error=None):
-    """Reemplaza el servicio de informe; devuelve (destino, top) de cada llamada."""
+    """Reemplaza el servicio de informe; devuelve (destino, top, categoría) de cada
+    llamada."""
     calls = []
 
-    def run_report(target, *, top_n=report_service.DEFAULT_TOP_N):
-        calls.append((target, top_n))
+    def run_report(target, *, top_n=report_service.DEFAULT_TOP_N, by_category=False):
+        calls.append((target, top_n, by_category))
         if error:
             raise error
         return report
@@ -664,21 +666,28 @@ def test_report_help_describes_the_target_from_the_catalog(capsys):
 def test_report_passes_the_target_as_typed_and_the_default_top(monkeypatch, capsys):
     calls = fake_run_report(monkeypatch, make_report())
     assert main(["report", "c:"]) == 0
-    assert calls == [("c:", report_service.DEFAULT_TOP_N)]
+    assert calls == [("c:", report_service.DEFAULT_TOP_N, False)]
     capsys.readouterr()
 
 
 def test_report_with_no_target_passes_none(monkeypatch, capsys):
     calls = fake_run_report(monkeypatch, make_report())
     assert main(["report"]) == 0
-    assert calls == [(None, report_service.DEFAULT_TOP_N)]
+    assert calls == [(None, report_service.DEFAULT_TOP_N, False)]
+    capsys.readouterr()
+
+
+def test_by_category_flag_is_passed_through(monkeypatch, capsys):
+    calls = fake_run_report(monkeypatch, make_report())
+    assert main(["report", "C:", "--by-category"]) == 0
+    assert calls == [("C:", report_service.DEFAULT_TOP_N, True)]
     capsys.readouterr()
 
 
 def test_report_top_is_passed_through(monkeypatch, capsys):
     calls = fake_run_report(monkeypatch, make_report())
     assert main(["report", "C:", "--top", "5"]) == 0
-    assert calls == [("C:", 5)]
+    assert calls == [("C:", 5, False)]
     capsys.readouterr()
 
 
@@ -725,6 +734,65 @@ def test_report_with_no_folders_still_shows_the_table_header(monkeypatch, capsys
     table = format_table(["Carpeta", "Tamaño", "Archivos"], [], align=("l", "r", "r"))
     assert lines[1 : 1 + len(table)] == table
     assert lines[1 + len(table)] == "Se muestran 0 de 0 carpetas guardadas."
+
+
+def test_by_category_prints_a_category_table_instead_of_folders(monkeypatch, capsys):
+    report = make_report(
+        by_category=(
+            CategoryTotal(category="cache", size_bytes=10 * GIB, folders=3),
+            CategoryTotal(category="temp", size_bytes=2 * GIB, folders=1),
+        )
+    )
+    fake_run_report(monkeypatch, report)
+    assert main(["report", "C:", "--by-category"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    rows = [["cache", "10,0 GiB", "3"], ["temp", "2,0 GiB", "1"]]
+    table = format_table(
+        ["Categoría", "Tamaño", "Carpetas"], rows, align=("l", "r", "r")
+    )
+    assert lines[1 : 1 + len(table)] == table
+    assert lines[1 + len(table)] == "Se muestran 2 categorías."
+
+
+def test_by_category_with_no_categories_still_shows_the_table_header(
+    monkeypatch, capsys
+):
+    report = make_report(by_category=())
+    fake_run_report(monkeypatch, report)
+    assert main(["report", "C:", "--by-category"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    table = format_table(["Categoría", "Tamaño", "Carpetas"], [], align=("l", "r", "r"))
+    assert lines[1 : 1 + len(table)] == table
+    assert lines[1 + len(table)] == "Se muestran 0 categorías."
+
+
+def test_by_category_json_has_a_by_category_field_and_no_top_folders_confusion(
+    monkeypatch, capsys
+):
+    report = make_report(
+        by_category=(CategoryTotal(category="cache", size_bytes=10 * GIB, folders=3),)
+    )
+    fake_run_report(monkeypatch, report)
+    assert main(["report", "C:", "--by-category", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["by_category"] == [
+        {"category": "cache", "size_bytes": 10 * GIB, "folders": 3}
+    ]
+
+
+def test_json_without_by_category_has_a_null_by_category_field(monkeypatch, capsys):
+    fake_run_report(monkeypatch, make_report())
+    assert main(["report", "C:", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["by_category"] is None
+
+
+def test_report_help_mentions_the_by_category_option(capsys):
+    with pytest.raises(SystemExit):
+        main(["report", "--help"])
+    shown = " ".join(capsys.readouterr().out.split())
+    assert "--by-category" in shown
+    assert t("cli.report.by_category_help") in shown
 
 
 def test_report_json_has_the_expected_fields(monkeypatch, capsys):
