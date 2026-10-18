@@ -126,6 +126,32 @@ def classify_footprint(
     return None
 
 
+def might_be_related(path: str, program: Program) -> bool:
+    """Si el *nombre* de `path` (solo la carpeta, no toda la ruta) podría ser de
+    `program`, sin mirar tamaño ni fecha.
+
+    Es el filtro barato de antes de medir una carpeta de verdad (T2B.5): recorrer
+    `%LOCALAPPDATA%`, `%APPDATA%` o el perfil entero y medir el tamaño de cada
+    subcarpeta sería caro, así que primero se descartan por nombre las que no
+    tienen ninguna chance. Usa las mismas reglas de nombre que `classify_footprint`
+    (coincidencia exacta o parcial, zonas protegidas y nombres genéricos excluidos);
+    no reemplaza esa clasificación, que además decide por fecha y por huella
+    conocida una vez que la carpeta ya se midió.
+    """
+    if _is_protected(path):
+        return False
+    name = _folder_name(path)
+    if _is_generic_name(name):
+        return False
+    if name.casefold() in {
+        value.casefold() for value in (program.name, program.publisher) if value
+    }:
+        return True
+    return bool(_partially_matches(name, program.name)) or (
+        bool(program.publisher) and _partially_matches(name, program.publisher)
+    )
+
+
 def footprints_of(
     program: Program,
     candidates: Sequence[FolderCandidate],

@@ -19,6 +19,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
+from discoclaro.domain.footprint import Footprint
 from discoclaro.domain.models import LargeFile, Node, Program, Snapshot
 from discoclaro.platform import windows
 
@@ -244,6 +245,14 @@ _SELECT_ACTIVE_PROGRAMS = """
 
 _MARK_ALL_REMOVED = "UPDATE programs SET removed_at = ? WHERE removed_at IS NULL"
 
+_INSERT_FOOTPRINT = """
+    INSERT INTO program_footprints (
+        program_id, path, size_bytes, confidence, reason, recorded_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+"""
+
+_DELETE_FOOTPRINTS = "DELETE FROM program_footprints WHERE program_id = ?"
+
 _DELETE_SNAPSHOT = "DELETE FROM snapshots WHERE id = ?"
 
 # En Python, un sustituto suelto (UTF-16 inválido) es siempre un carácter solo.
@@ -464,6 +473,14 @@ class Store:
             _rollback(self._connection)
             raise
 
+    def has_recorded_programs(self) -> bool:
+        """Si ya se guardó alguna revisión del inventario de programas, aunque
+        ahora mismo no haya ninguno activo. Distingue la primera revisión de
+        verdad (nada que comparar todavía, T2B.5) de una base vacía porque todo
+        se desinstaló."""
+        row = self._connection.execute("SELECT 1 FROM programs LIMIT 1").fetchone()
+        return row is not None
+
     def active_programs(self) -> list[Program]:
         """Los programas de la última revisión que no están marcados como
         quitados (`removed_at` vacío), ordenados por nombre."""
@@ -487,6 +504,46 @@ class Store:
                 estimated_size_bytes,
             ) in rows
         ]
+
+    def save_footprints(
+        self, program_name: str, footprints: Iterable[Footprint], recorded_at: datetime
+    ) -> None:
+        """Guarda la huella de un programa (T2B.5): una fila por carpeta candidata.
+
+        Reemplaza cualquier huella guardada antes para este programa (un
+        programa desinstalado y vuelto a instalar conserva el mismo `id`, T2B.2;
+        sin este reemplazo quedarían mezcladas huellas de dos instalaciones
+        distintas). No hace nada si `program_name` no está en `programs` (hay
+        que llamar `save_programs` primero con ese programa).
+        """
+        row = self._connection.execute(
+            _SELECT_PROGRAM_ID_BY_NAME, (_clean(program_name),)
+        ).fetchone()
+        if row is None:
+            return
+        program_id = row[0]
+        moment = recorded_at.astimezone(UTC).isoformat(timespec="microseconds")
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            self._connection.execute(_DELETE_FOOTPRINTS, (program_id,))
+            self._connection.executemany(
+                _INSERT_FOOTPRINT,
+                [
+                    (
+                        program_id,
+                        _clean(footprint.path),
+                        footprint.size_bytes,
+                        footprint.confidence,
+                        footprint.reason,
+                        moment,
+                    )
+                    for footprint in footprints
+                ],
+            )
+            self._connection.execute("COMMIT")
+        except BaseException:
+            _rollback(self._connection)
+            raise
 
 
 def _clean(text: str) -> str:

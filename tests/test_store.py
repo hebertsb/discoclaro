@@ -11,6 +11,7 @@ import pytest
 
 from discoclaro.adapters import store as store_module
 from discoclaro.adapters.store import Store, StoreError
+from discoclaro.domain.footprint import Footprint
 from discoclaro.domain.models import LargeFile, Node, Program, Snapshot
 from discoclaro.platform import windows
 
@@ -275,6 +276,91 @@ def test_a_program_with_lone_surrogates_in_its_name_round_trips(store):
     store.save_programs([make_program(name=hostile)], T0)
     [program] = store.active_programs()
     assert program.name == "ghost�name"
+
+
+def test_has_recorded_programs_is_false_before_any_save(store):
+    assert store.has_recorded_programs() is False
+
+
+def test_has_recorded_programs_is_true_after_a_save(store):
+    store.save_programs([make_program()], T0)
+    assert store.has_recorded_programs() is True
+
+
+def test_has_recorded_programs_stays_true_once_everything_is_removed(store):
+    store.save_programs([make_program(name="A")], T0)
+    store.save_programs([], T0 + timedelta(days=1))
+    assert store.active_programs() == []
+    assert store.has_recorded_programs() is True
+
+
+def make_footprint(**changes):
+    fields = {
+        "path": "C:\\Program Files\\Acme",
+        "size_bytes": 2048,
+        "last_modified": None,
+        "confidence": "high",
+        "reason": "install_location",
+    }
+    return Footprint(**{**fields, **changes})
+
+
+def footprint_rows(store, program_name):
+    return store._connection.execute(
+        """
+        SELECT path, size_bytes, confidence, reason, recorded_at
+        FROM program_footprints
+        JOIN programs ON programs.id = program_footprints.program_id
+        WHERE programs.name = ?
+        ORDER BY path
+        """,
+        (program_name,),
+    ).fetchall()
+
+
+def test_save_footprints_of_an_unknown_program_does_nothing(store):
+    store.save_footprints("Ghost", [make_footprint()], T0)
+    assert footprint_rows(store, "Ghost") == []
+
+
+def test_saved_footprints_can_be_read_back(store):
+    store.save_programs([make_program()], T0)
+    store.save_footprints(
+        "Acme App",
+        [
+            make_footprint(path="C:\\Program Files\\Acme"),
+            make_footprint(
+                path="C:\\Users\\x\\AppData\\Roaming\\Acme",
+                size_bytes=512,
+                confidence="low",
+                reason="partial_name_match",
+            ),
+        ],
+        T0,
+    )
+    rows = footprint_rows(store, "Acme App")
+    assert [row[0] for row in rows] == [
+        "C:\\Program Files\\Acme",
+        "C:\\Users\\x\\AppData\\Roaming\\Acme",
+    ]
+    assert rows[0][1:4] == (2048, "high", "install_location")
+    assert rows[0][4] == T0.isoformat(timespec="microseconds")
+
+
+def test_saving_footprints_again_replaces_the_previous_ones(store):
+    store.save_programs([make_program()], T0)
+    store.save_footprints("Acme App", [make_footprint(path="C:\\Old")], T0)
+    store.save_footprints(
+        "Acme App", [make_footprint(path="C:\\New")], T0 + timedelta(days=1)
+    )
+    assert [row[0] for row in footprint_rows(store, "Acme App")] == ["C:\\New"]
+
+
+def test_footprints_are_deleted_with_their_program(store):
+    store.save_programs([make_program(name="A")], T0)
+    store.save_footprints("A", [make_footprint()], T0)
+    store._connection.execute("DELETE FROM programs WHERE name = 'A'")
+    assert footprint_rows(store, "A") == []
 
 
 def test_an_alert_never_fired_has_no_last_time(store):

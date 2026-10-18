@@ -119,6 +119,12 @@ message_budget_exceeded = "{target} superó su presupuesto: ocupa {measured} de 
 message_big_new_file = "Archivo nuevo de {measured}: {target}."
 message_unexplained_grew = "Lo no explicado de {target} creció {measured} (el límite es {limit})."
 
+[programs]
+installed_title = "Programa instalado"
+installed_message = "Se instaló {name} en {location} ({size})."
+installed_message_with_extra = "Se instaló {name} en {location} ({size}) y {extra_size} más en otras {extra_count} carpetas."
+installed_unknown_size = "Se instaló {name}, pero no se encontró ninguna carpeta suya para medir."
+
 [admin]
 announce = "Se pedirá permiso de administrador para escanear {target} en modo solo lectura. Windows mostrará su propia ventana de permisos."
 command = "Orden que recibirá Windows: {command}"

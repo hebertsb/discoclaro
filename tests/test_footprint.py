@@ -7,6 +7,7 @@ from discoclaro.domain.footprint import (
     FolderCandidate,
     classify_footprint,
     footprints_of,
+    might_be_related,
 )
 from discoclaro.domain.models import Program
 
@@ -194,6 +195,46 @@ def test_footprints_of_preserves_the_given_order():
     ]
     found = footprints_of(program, candidates)
     assert [f.path for f in found] == ["D:\\Acme", "C:\\ProgramData\\Acme"]
+
+
+def test_might_be_related_matches_an_exact_name():
+    program = make_program(install_location=None, name="Acme App")
+    assert might_be_related("C:\\Users\\x\\AppData\\Roaming\\Acme App", program)
+
+
+def test_might_be_related_matches_an_exact_publisher():
+    program = make_program(install_location=None, publisher="Acme")
+    assert might_be_related("C:\\ProgramData\\Acme", program)
+
+
+def test_might_be_related_matches_a_partial_name():
+    program = make_program(
+        install_location=None, name="Acme App Suite", publisher="Acme Corp"
+    )
+    assert might_be_related("D:\\Random\\Acme", program)
+
+
+def test_might_be_related_rejects_an_unrelated_name():
+    program = make_program(install_location=None, name="Zzz", publisher="Zzz")
+    assert not might_be_related("D:\\Unrelated\\Folder", program)
+
+
+def test_might_be_related_rejects_a_generic_name():
+    program = make_program(install_location=None, name="Google", publisher="Google")
+    assert not might_be_related("C:\\Users\\x\\AppData\\Local\\Google", program)
+
+
+def test_might_be_related_rejects_a_protected_zone_even_with_a_name_match():
+    program = make_program(install_location=None, name="System32")
+    assert not might_be_related("C:\\Windows\\System32", program)
+
+
+def test_might_be_related_never_needs_size_or_date_to_match():
+    program = make_program(install_location=None, name="Acme")
+    assert might_be_related("D:\\Acme", program)
+    found = classify_footprint(program, candidate("D:\\Acme"))
+    assert found is not None
+    assert found.reason == "name_match"
 
 
 def test_a_footprint_keeps_the_size_and_last_modified_of_its_candidate():
