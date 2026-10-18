@@ -10,6 +10,7 @@ report = "Muestra un informe de lo que ocupa espacio."
 growth = "Compara dos fotos y muestra qué creció."
 check = "Evalúa los avisos configurados y notifica los que correspondan."
 schedule = "Instala, quita o consulta la tarea programada que escanea y revisa avisos."
+leftovers = "Busca restos de un programa ya desinstalado, solo por nombre."
 
 [cli.scan]
 target_name = "DESTINO"
@@ -42,6 +43,11 @@ remove_help = "Quita las tareas programadas."
 status_help = "Muestra si las tareas programadas ya están instaladas."
 target_name = "DESTINO"
 target_help = "Disco (por ejemplo C:) o carpeta que la tarea escaneará cada día."
+
+[cli.leftovers]
+name_name = "NOMBRE"
+name_help = "Nombre del programa ya desinstalado a buscar (tal como aparecía)."
+json_help = "Muestra el resultado en JSON en vez de en una tabla."
 
 [format]
 decimal_separator = ","
@@ -125,6 +131,24 @@ installed_message = "Se instaló {name} en {location} ({size})."
 installed_message_with_extra = "Se instaló {name} en {location} ({size}) y {extra_size} más en otras {extra_count} carpetas."
 installed_unknown_size = "Se instaló {name}, pero no se encontró ninguna carpeta suya para medir."
 
+[footprints]
+confidence_high = "alta"
+confidence_medium = "media"
+confidence_low = "baja"
+reason_install_location = "carpeta de instalación"
+reason_known_footprint = "huella conocida"
+reason_name_match = "nombre coincide"
+reason_partial_name_match = "coincidencia parcial del nombre"
+reason_near_install_date = "cerca de la fecha de instalación"
+
+[leftovers]
+none_found = "No se encontró ningún resto de «{name}»."
+column_path = "Carpeta"
+column_size = "Tamaño"
+column_confidence = "Confianza"
+column_reason = "Motivo"
+shown = "Se encontraron {shown} carpetas."
+
 [admin]
 announce = "Se pedirá permiso de administrador para escanear {target} en modo solo lectura. Windows mostrará su propia ventana de permisos."
 command = "Orden que recibirá Windows: {command}"
@@ -153,3 +177,4 @@ growth_invalid_since = "«{target}» no es una antigüedad válida: un número y
 growth_not_enough_history = "No hay ninguna foto de {target} lo bastante vieja para comparar. Esperá más tiempo entre escaneos, o probá con un --since más chico."
 check_no_snapshots = "No hay ninguna foto guardada todavía. Corre `discoclaro scan <disco>` primero."
 schedule_failed = "No se pudo crear la tarea programada: {target}"
+leftovers_empty_name = "Hace falta un nombre para buscar restos."

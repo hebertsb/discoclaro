@@ -1,9 +1,11 @@
-"""Pruebas del aviso de instalación (T2B.5): siempre sobre `tmp_path`.
+"""Pruebas del aviso de instalación (T2B.5) y de la búsqueda de restos (T2B.6):
+siempre sobre `tmp_path` o entornos falsos.
 
 `check_programs` abre y escribe una base de verdad en `tmp_path`, pero el
 inventario (`read_programs`), las variables de entorno, la medición de carpetas
 (`inspect`) y el aviso (`notify`) siempre se reemplazan por valores falsos: nunca
 se toca el registro, el disco real ni se muestra un toast de verdad.
+`find_leftovers` nunca abre una base; solo recibe `environment`/`inspect` falsos.
 """
 
 import inspect as inspect_module
@@ -16,7 +18,11 @@ from discoclaro.adapters.store import Store
 from discoclaro.domain.footprint import FolderCandidate
 from discoclaro.domain.models import Program
 from discoclaro.platform import windows
-from discoclaro.services.programs_service import ProgramsCheckError, check_programs
+from discoclaro.services.programs_service import (
+    ProgramsCheckError,
+    check_programs,
+    find_leftovers,
+)
 
 T0 = datetime(2026, 10, 18, 9, 0, tzinfo=UTC)
 
@@ -249,3 +255,65 @@ def test_the_real_adapters_are_the_defaults_without_calling_them():
     assert parameters["read_programs"].default is windows.installed_programs
     assert parameters["environment"].default is windows.environment_variables
     assert parameters["notify"].default is notifier.send_notification
+
+
+def test_find_leftovers_with_an_empty_name_raises(tmp_path):
+    with pytest.raises(ProgramsCheckError) as error:
+        find_leftovers("", environment=dict, inspect=fake_inspect({}))
+    assert error.value.kind == "leftovers_empty_name"
+
+
+def test_find_leftovers_matches_a_related_folder_by_name(tmp_path):
+    local = tmp_path / "local"
+    local.mkdir()
+    (local / "Buzz").mkdir()
+    (local / "Unrelated").mkdir()
+    inspect = fake_inspect({str(local / "Buzz"): 4096})
+    found = find_leftovers(
+        "Buzz", environment=lambda: {"%LOCALAPPDATA%": str(local)}, inspect=inspect
+    )
+    assert [f.path for f in found] == [str(local / "Buzz")]
+    assert found[0].confidence == "medium"
+    assert found[0].reason == "name_match"
+
+
+def test_find_leftovers_returns_nothing_without_inventing_when_nothing_matches(
+    tmp_path,
+):
+    local = tmp_path / "local"
+    local.mkdir()
+    (local / "Unrelated").mkdir()
+    found = find_leftovers(
+        "Buzz",
+        environment=lambda: {"%LOCALAPPDATA%": str(local)},
+        inspect=fake_inspect({}),
+    )
+    assert found == []
+
+
+def test_find_leftovers_sorts_the_biggest_folder_first(tmp_path):
+    local = tmp_path / "local"
+    local.mkdir()
+    (local / "Buzz").mkdir()
+    (local / "Buzz Helper").mkdir()
+    inspect = fake_inspect({str(local / "Buzz"): 100, str(local / "Buzz Helper"): 9999})
+    found = find_leftovers(
+        "Buzz", environment=lambda: {"%LOCALAPPDATA%": str(local)}, inspect=inspect
+    )
+    assert [f.size_bytes for f in found] == [9999, 100]
+
+
+def test_find_leftovers_never_matches_install_location_or_near_install_date(tmp_path):
+    local = tmp_path / "local"
+    local.mkdir()
+    (local / "Buzz").mkdir()
+    inspect = fake_inspect({str(local / "Buzz"): 1})
+    found = find_leftovers(
+        "Buzz", environment=lambda: {"%LOCALAPPDATA%": str(local)}, inspect=inspect
+    )
+    assert {f.reason for f in found} <= {"name_match", "partial_name_match"}
+
+
+def test_the_real_adapters_are_the_defaults_for_find_leftovers_too():
+    parameters = inspect_module.signature(find_leftovers).parameters
+    assert parameters["environment"].default is windows.environment_variables

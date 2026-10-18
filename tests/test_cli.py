@@ -14,6 +14,7 @@ import pytest
 from discoclaro import __version__, i18n
 from discoclaro.domain.alerts import Alert
 from discoclaro.domain.categories import CategoryTotal
+from discoclaro.domain.footprint import Footprint
 from discoclaro.domain.formatting import format_table
 from discoclaro.domain.growth import CategoryGrowth, FolderGrowth
 from discoclaro.domain.models import LargeFile, Node, ScanProgress, Snapshot, SystemFile
@@ -24,6 +25,7 @@ from discoclaro.interfaces.cli import COMMANDS, main
 from discoclaro.services import growth_service, report_service
 from discoclaro.services.check_service import CheckError
 from discoclaro.services.growth_service import Growth, GrowthError
+from discoclaro.services.programs_service import ProgramsCheckError
 from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
 from discoclaro.services.schedule_service import (
@@ -1329,6 +1331,94 @@ def test_schedule_status_prints_altered_when_the_action_does_not_match(
     assert "no es la esperada" in lines[0]
     assert "Puede haberse alterado a mano" in lines[0]
     assert lines[1] == "Chequeo programado: instalado."
+
+
+def fake_find_leftovers(monkeypatch, footprints=None, error=None):
+    calls = []
+
+    def find_leftovers(name):
+        calls.append(name)
+        if error:
+            raise error
+        return footprints if footprints is not None else []
+
+    monkeypatch.setattr(cli.programs_service, "find_leftovers", find_leftovers)
+    return calls
+
+
+def test_leftovers_help_mentions_the_name_and_json(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["leftovers", "--help"])
+    assert exc.value.code == 0
+    shown = " ".join(capsys.readouterr().out.split())
+    assert "--json" in shown
+    assert t("cli.leftovers.name_name") in shown
+
+
+def test_leftovers_passes_the_name_exactly_as_typed(monkeypatch, capsys):
+    calls = fake_find_leftovers(monkeypatch, [])
+    assert main(["leftovers", "Buzz"]) == 0
+    assert calls == ["Buzz"]
+    capsys.readouterr()
+
+
+def test_leftovers_with_nothing_found_says_so_without_inventing_anything(
+    monkeypatch, capsys
+):
+    fake_find_leftovers(monkeypatch, [])
+    assert main(["leftovers", "Buzz"]) == 0
+    assert capsys.readouterr().out == "No se encontró ningún resto de «Buzz».\n"
+
+
+def test_leftovers_prints_a_table_in_spanish(monkeypatch, capsys):
+    footprint = Footprint(
+        path="C:\\ProgramData\\Acme",
+        size_bytes=1024,
+        last_modified=None,
+        confidence="medium",
+        reason="name_match",
+    )
+    fake_find_leftovers(monkeypatch, [footprint])
+    assert main(["leftovers", "Acme"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    table = format_table(
+        ["Carpeta", "Tamaño", "Confianza", "Motivo"],
+        [["C:\\ProgramData\\Acme", "1,0 KiB", "media", "nombre coincide"]],
+        align=("l", "r", "l", "l"),
+    )
+    assert lines[: len(table)] == table
+    assert lines[len(table)] == "Se encontraron 1 carpetas."
+
+
+def test_leftovers_json_has_the_expected_fields(monkeypatch, capsys):
+    moment = datetime(2026, 10, 18, 9, 0, tzinfo=UTC)
+    footprint = Footprint(
+        path="D:\\Old\\Acme",
+        size_bytes=2048,
+        last_modified=moment,
+        confidence="low",
+        reason="partial_name_match",
+    )
+    fake_find_leftovers(monkeypatch, [footprint])
+    assert main(["leftovers", "Acme", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data == [
+        {
+            "path": "D:\\Old\\Acme",
+            "size_bytes": 2048,
+            "last_modified": moment.isoformat(),
+            "confidence": "low",
+            "reason": "partial_name_match",
+        }
+    ]
+
+
+def test_leftovers_with_an_empty_name_is_reported(monkeypatch, capsys):
+    fake_find_leftovers(monkeypatch, error=ProgramsCheckError("leftovers_empty_name"))
+    assert main(["leftovers", ""]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Hace falta un nombre para buscar restos.\n"
 
 
 def test_output_never_crashes_on_characters_the_console_cannot_write(monkeypatch):

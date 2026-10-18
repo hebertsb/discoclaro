@@ -12,6 +12,7 @@ from collections.abc import Sequence
 
 from discoclaro import __version__
 from discoclaro.domain.alerts import Alert
+from discoclaro.domain.footprint import Footprint
 from discoclaro.domain.formatting import (
     format_bytes,
     format_decimal,
@@ -29,17 +30,19 @@ from discoclaro.services import (
     check_service,
     elevation_service,
     growth_service,
+    programs_service,
     report_service,
     scan_service,
     schedule_service,
 )
 from discoclaro.services.check_service import CheckError
 from discoclaro.services.growth_service import Growth, GrowthError
+from discoclaro.services.programs_service import ProgramsCheckError
 from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
 from discoclaro.services.schedule_service import ScheduleError, TaskStatus
 
-COMMANDS = ("scan", "report", "growth", "check", "schedule")
+COMMANDS = ("scan", "report", "growth", "check", "schedule", "leftovers")
 EXIT_CANCELLED = 130
 PROGRESS_INTERVAL_S = 0.15
 
@@ -139,6 +142,15 @@ def build_parser() -> argparse.ArgumentParser:
             )
             schedule_subparsers.add_parser("remove", help=t("cli.schedule.remove_help"))
             schedule_subparsers.add_parser("status", help=t("cli.schedule.status_help"))
+        elif name == "leftovers":
+            subparser.add_argument(
+                "name",
+                metavar=t("cli.leftovers.name_name"),
+                help=t("cli.leftovers.name_help"),
+            )
+            subparser.add_argument(
+                "--json", action="store_true", help=t("cli.leftovers.json_help")
+            )
     return parser
 
 
@@ -156,6 +168,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _check(args.json)
     if args.command == "schedule":
         return _schedule(args.schedule_action, getattr(args, "target", None))
+    if args.command == "leftovers":
+        return _leftovers(args.name, args.json)
     return 0
 
 
@@ -341,6 +355,63 @@ def _status_suffix(task: TaskStatus) -> str:
     if not task.installed:
         return "not_installed"
     return "altered" if task.altered else "installed"
+
+
+def _leftovers(name: str, as_json: bool) -> int:
+    """Busca restos de un programa ya desinstalado, solo por nombre, y los muestra."""
+    try:
+        footprints = programs_service.find_leftovers(name)
+    except ProgramsCheckError as error:
+        message = t(f"errors.{error.kind}", target=safe_text(error.target))
+        print(message, file=sys.stderr)
+        return 1
+    if as_json:
+        print(
+            json.dumps(
+                [_footprint_to_json(f) for f in footprints],
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        for line in _leftovers_lines(name, footprints):
+            print(line)
+    return 0
+
+
+def _leftovers_lines(name: str, footprints: list[Footprint]) -> list[str]:
+    if not footprints:
+        return [t("leftovers.none_found", name=safe_text(name))]
+    headers = [
+        t("leftovers.column_path"),
+        t("leftovers.column_size"),
+        t("leftovers.column_confidence"),
+        t("leftovers.column_reason"),
+    ]
+    rows = [
+        [
+            safe_text(footprint.path),
+            _size(footprint.size_bytes),
+            t(f"footprints.confidence_{footprint.confidence}"),
+            t(f"footprints.reason_{footprint.reason}"),
+        ]
+        for footprint in footprints
+    ]
+    lines = format_table(headers, rows, align=("l", "r", "l", "l"))
+    lines.append(t("leftovers.shown", shown=_number(len(footprints))))
+    return lines
+
+
+def _footprint_to_json(footprint: Footprint) -> dict[str, object]:
+    return {
+        "path": footprint.path,
+        "size_bytes": footprint.size_bytes,
+        "last_modified": None
+        if footprint.last_modified is None
+        else footprint.last_modified.isoformat(),
+        "confidence": footprint.confidence,
+        "reason": footprint.reason,
+    }
 
 
 def _check_lines(alerts: list[Alert]) -> list[str]:

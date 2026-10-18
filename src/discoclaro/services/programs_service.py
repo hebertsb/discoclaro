@@ -13,7 +13,12 @@ no se hiciera esta distinción, los ~100 programas ya instalados en una máquina
 real aparecerían todos como "recién instalados" la primera vez que se corre.
 
 Alcance a propósito: solo instalaciones (`diff.installed`). Las desinstalaciones
-quedan para T2B.7, que necesita además la búsqueda por nombre de T2B.6.
+quedan para T2B.7.
+
+También `find_leftovers(name)` (T2B.6), para un programa que ya se desinstaló antes
+de usar discoclaro y por eso no tiene ningún `Program` ni huella guardada: busca
+solo por nombre, en las mismas ubicaciones típicas, sin inventar un resto que no
+exista.
 """
 
 import os
@@ -188,3 +193,38 @@ def check_programs(
                 store.save_footprints(program.name, footprints, moment)
             notify(*_format_install_notice(program, footprints))
         return diff.installed
+
+
+def find_leftovers(
+    name: str,
+    *,
+    environment: Callable[[], Mapping[str, str]] = windows.environment_variables,
+    inspect: Callable[[str], FolderCandidate | None] = inspect_folder,
+) -> list[Footprint]:
+    """Busca restos de un programa ya desinstalado, solo por nombre (T2B.6).
+
+    Sin ningún `Program` del registro ni huella guardada de referencia (se
+    desinstaló antes de usar discoclaro), así que solo pueden salir restos por
+    coincidencia de nombre (`name_match`/`partial_name_match`): nunca por
+    `install_location`, `known_footprint` ni `near_install_date`, que necesitan
+    datos que este caso no tiene. Devuelve una lista vacía, nunca un resto
+    inventado, si no se encuentra nada; ordenados del más grande al más chico.
+    """
+    if not name:
+        raise ProgramsCheckError("leftovers_empty_name")
+    program = Program(
+        name=name,
+        version=None,
+        publisher=None,
+        install_location=None,
+        install_date=None,
+        estimated_size_bytes=None,
+        uninstall_string=None,
+    )
+    candidates = [
+        candidate
+        for path in _candidate_paths(program, environment())
+        if (candidate := inspect(path)) is not None
+    ]
+    found = footprints_of(program, candidates)
+    return sorted(found, key=lambda footprint: footprint.size_bytes, reverse=True)

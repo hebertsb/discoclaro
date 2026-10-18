@@ -10,6 +10,7 @@ report = "Shows a report of what takes up space."
 growth = "Compares two snapshots and shows what grew."
 check = "Evaluates the configured alerts and notifies the ones that apply."
 schedule = "Installs, removes or checks the scheduled task that scans and checks alerts."
+leftovers = "Looks for leftovers of an already uninstalled program, by name only."
 
 [cli.scan]
 target_name = "TARGET"
@@ -42,6 +43,11 @@ remove_help = "Removes the scheduled tasks."
 status_help = "Shows whether the scheduled tasks are already installed."
 target_name = "TARGET"
 target_help = "Disk (for example C:) or folder the task will scan every day."
+
+[cli.leftovers]
+name_name = "NAME"
+name_help = "Name of the already uninstalled program to search for (as it used to appear)."
+json_help = "Show the result as JSON instead of a table."
 
 [format]
 decimal_separator = "."
@@ -125,6 +131,24 @@ installed_message = "{name} was installed in {location} ({size})."
 installed_message_with_extra = "{name} was installed in {location} ({size}) plus {extra_size} more across {extra_count} other folders."
 installed_unknown_size = "{name} was installed, but no folder of its own was found to measure."
 
+[footprints]
+confidence_high = "high"
+confidence_medium = "medium"
+confidence_low = "low"
+reason_install_location = "install folder"
+reason_known_footprint = "known footprint"
+reason_name_match = "name matches"
+reason_partial_name_match = "partial name match"
+reason_near_install_date = "near the install date"
+
+[leftovers]
+none_found = "No leftovers of \"{name}\" were found."
+column_path = "Folder"
+column_size = "Size"
+column_confidence = "Confidence"
+column_reason = "Reason"
+shown = "Found {shown} folders."
+
 [admin]
 announce = "Administrator permission will be requested to scan {target} in read-only mode. Windows will show its own permission window."
 command = "Command Windows will receive: {command}"
@@ -153,3 +177,4 @@ growth_invalid_since = "\"{target}\" is not a valid age: a number and d, h or w,
 growth_not_enough_history = "There is no snapshot of {target} old enough to compare with. Wait longer between scans, or try a smaller --since."
 check_no_snapshots = "There is no snapshot saved yet. Run `discoclaro scan <disk>` first."
 schedule_failed = "Could not create the scheduled task: {target}"
+leftovers_empty_name = "A name is needed to search for leftovers."
