@@ -11,7 +11,7 @@ import pytest
 
 from discoclaro.adapters import store as store_module
 from discoclaro.adapters.store import Store, StoreError
-from discoclaro.domain.models import LargeFile, Node, Snapshot
+from discoclaro.domain.models import LargeFile, Node, Program, Snapshot
 from discoclaro.platform import windows
 
 T0 = datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
@@ -77,11 +77,18 @@ def count(store, table):
 
 def test_open_creates_the_schema_with_wal_and_foreign_keys(store):
     connection = store._connection
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
     assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     tables = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-    assert {row[0] for row in tables} == {"snapshots", "nodes", "large_files", "alerts"}
+    assert {row[0] for row in tables} == {
+        "snapshots",
+        "nodes",
+        "large_files",
+        "alerts",
+        "programs",
+        "program_footprints",
+    }
     indexes = connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL"
     )
@@ -90,6 +97,8 @@ def test_open_creates_the_schema_with_wal_and_foreign_keys(store):
         "nodes_by_rule",
         "snapshots_by_volume",
         "large_files_by_path",
+        "programs_by_name",
+        "program_footprints_by_program",
     }
 
 
@@ -175,6 +184,97 @@ def test_delete_snapshots_cascades_to_nodes_and_large_files(store):
     store.delete_snapshots([snapshot_id])
     assert store.nodes(snapshot_id) == []
     assert store.large_files(snapshot_id) == []
+
+
+def make_program(**changes):
+    fields = {
+        "name": "Acme App",
+        "version": "1.0",
+        "publisher": "Acme",
+        "install_location": "C:\\Program Files\\Acme",
+        "install_date": "20261017",
+        "estimated_size_bytes": 1024,
+        "uninstall_string": "C:\\Program Files\\Acme\\uninst.exe",
+    }
+    return Program(**{**fields, **changes})
+
+
+def program_row(store, name):
+    return store._connection.execute(
+        "SELECT first_seen, last_seen, removed_at FROM programs WHERE name = ?",
+        (name,),
+    ).fetchone()
+
+
+def test_a_saved_program_can_be_read_back_as_active(store):
+    store.save_programs([make_program()], T0)
+    [program] = store.active_programs()
+    assert program.name == "Acme App"
+    assert program.version == "1.0"
+    assert program.publisher == "Acme"
+    assert program.install_location == "C:\\Program Files\\Acme"
+    assert program.install_date == "20261017"
+    assert program.estimated_size_bytes == 1024
+
+
+def test_active_programs_never_carries_the_uninstall_string(store):
+    store.save_programs([make_program()], T0)
+    [program] = store.active_programs()
+    assert program.uninstall_string is None
+
+
+def test_saving_the_same_program_again_keeps_its_first_seen(store):
+    store.save_programs([make_program()], T0)
+    store.save_programs([make_program()], T0 + timedelta(days=1))
+    first_seen, last_seen, removed_at = program_row(store, "Acme App")
+    assert first_seen == T0.isoformat(timespec="microseconds")
+    assert last_seen == (T0 + timedelta(days=1)).isoformat(timespec="microseconds")
+    assert removed_at is None
+
+
+def test_a_program_missing_from_a_later_save_is_marked_removed(store):
+    store.save_programs([make_program(name="A")], T0)
+    store.save_programs([make_program(name="B")], T0 + timedelta(days=1))
+    assert {p.name for p in store.active_programs()} == {"B"}
+    _, _, removed_at = program_row(store, "A")
+    assert removed_at == (T0 + timedelta(days=1)).isoformat(timespec="microseconds")
+
+
+def test_an_already_removed_program_keeps_its_original_removed_at(store):
+    store.save_programs([make_program(name="A")], T0)
+    store.save_programs([], T0 + timedelta(days=1))
+    store.save_programs([], T0 + timedelta(days=2))
+    _, _, removed_at = program_row(store, "A")
+    assert removed_at == (T0 + timedelta(days=1)).isoformat(timespec="microseconds")
+
+
+def test_a_removed_program_that_reappears_becomes_active_again(store):
+    store.save_programs([make_program(name="A")], T0)
+    store.save_programs([], T0 + timedelta(days=1))
+    store.save_programs([make_program(name="A")], T0 + timedelta(days=2))
+    assert {p.name for p in store.active_programs()} == {"A"}
+    _, _, removed_at = program_row(store, "A")
+    assert removed_at is None
+
+
+def test_saving_a_program_again_updates_its_changed_fields(store):
+    store.save_programs([make_program(version="1.0")], T0)
+    store.save_programs([make_program(version="2.0")], T0 + timedelta(days=1))
+    [program] = store.active_programs()
+    assert program.version == "2.0"
+
+
+def test_saving_an_empty_inventory_marks_everything_removed(store):
+    store.save_programs([make_program(name="A")], T0)
+    store.save_programs([], T0 + timedelta(days=1))
+    assert store.active_programs() == []
+
+
+def test_a_program_with_lone_surrogates_in_its_name_round_trips(store):
+    hostile = "ghost\ud800name"
+    store.save_programs([make_program(name=hostile)], T0)
+    [program] = store.active_programs()
+    assert program.name == "ghost�name"
 
 
 def test_an_alert_never_fired_has_no_last_time(store):
@@ -327,7 +427,14 @@ def test_hostile_names_are_stored_and_recovered_verbatim_and_the_tables_survive(
     tables = store._connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table'"
     )
-    assert {row[0] for row in tables} == {"snapshots", "nodes", "large_files", "alerts"}
+    assert {row[0] for row in tables} == {
+        "snapshots",
+        "nodes",
+        "large_files",
+        "alerts",
+        "programs",
+        "program_footprints",
+    }
     assert count(store, "snapshots") == 1
     assert count(store, "nodes") == len(HOSTILE)
     assert store.save_snapshot(make_snapshot(), make_nodes()) == snapshot_id + 1
@@ -474,7 +581,7 @@ def test_a_version_1_database_is_migrated_keeping_its_photos(db_path):
         assert (old.id, old.scanned_bytes, old.duplicate_bytes) == (1, 300, 0)
         store.save_snapshot(make_snapshot(duplicate_bytes=50), [])
         assert store.snapshots("C:")[0].duplicate_bytes == 50
-    assert raw_query(db_path, "PRAGMA user_version") == [(4,)]
+    assert raw_query(db_path, "PRAGMA user_version") == [(5,)]
 
 
 def test_migrations_are_applied_one_version_at_a_time(db_path, monkeypatch):

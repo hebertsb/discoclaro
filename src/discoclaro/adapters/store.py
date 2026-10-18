@@ -19,7 +19,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
-from discoclaro.domain.models import LargeFile, Node, Snapshot
+from discoclaro.domain.models import LargeFile, Node, Program, Snapshot
 from discoclaro.platform import windows
 
 BUSY_TIMEOUT_S = 5.0
@@ -106,6 +106,52 @@ MIGRATIONS = (
             "PRAGMA user_version = 4",
         ),
     ),
+    (
+        5,
+        (
+            # Inventario de programas instalados (T2B.2), leído del registro. No es
+            # una foto por revisión como `snapshots`: cada programa es UNA fila que
+            # se actualiza (`last_seen`) mientras sigue instalado, y se marca
+            # `removed_at` el día que una revisión ya no lo encuentra. Sin
+            # restricción UNIQUE en `name`: dos instalaciones reales (máquina y
+            # usuario) pueden compartir el mismo nombre, y una colisión ahí no debe
+            # tumbar el guardado.
+            """
+            CREATE TABLE programs (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                version TEXT,
+                publisher TEXT,
+                install_location TEXT,
+                install_date TEXT,
+                estimated_size_bytes INTEGER
+                    CHECK (estimated_size_bytes IS NULL OR estimated_size_bytes >= 0),
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                removed_at TEXT
+            )
+            """,
+            "CREATE INDEX programs_by_name ON programs (name)",
+            # Carpetas candidatas de un programa (T2B.4/T2B.5); por ahora solo el
+            # esquema, todavía no la llena nada: `confidence` no lleva una lista
+            # cerrada de valores aquí porque esa lista la define domain/footprint.py,
+            # que no existe todavía.
+            """
+            CREATE TABLE program_footprints (
+                program_id INTEGER NOT NULL
+                    REFERENCES programs (id) ON DELETE CASCADE,
+                path TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+                confidence TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                recorded_at TEXT NOT NULL
+            )
+            """,
+            "CREATE INDEX program_footprints_by_program "
+            "ON program_footprints (program_id, path)",
+            "PRAGMA user_version = 5",
+        ),
+    ),
 )
 
 _INSERT_SNAPSHOT = """
@@ -171,6 +217,32 @@ _UPSERT_ALERT = """
     INSERT INTO alerts (kind, target, fired_at) VALUES (?, ?, ?)
     ON CONFLICT (kind, target) DO UPDATE SET fired_at = excluded.fired_at
 """
+
+_SELECT_PROGRAM_ID_BY_NAME = "SELECT id FROM programs WHERE name = ?"
+
+_INSERT_PROGRAM = """
+    INSERT INTO programs (
+        name, version, publisher, install_location, install_date,
+        estimated_size_bytes, first_seen, last_seen, removed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+"""
+
+_UPDATE_PROGRAM = """
+    UPDATE programs SET
+        version = ?, publisher = ?, install_location = ?, install_date = ?,
+        estimated_size_bytes = ?, last_seen = ?, removed_at = NULL
+    WHERE name = ?
+"""
+
+_SELECT_ACTIVE_PROGRAMS = """
+    SELECT name, version, publisher, install_location, install_date,
+           estimated_size_bytes
+    FROM programs
+    WHERE removed_at IS NULL
+    ORDER BY name
+"""
+
+_MARK_ALL_REMOVED = "UPDATE programs SET removed_at = ? WHERE removed_at IS NULL"
 
 _DELETE_SNAPSHOT = "DELETE FROM snapshots WHERE id = ?"
 
@@ -353,6 +425,68 @@ class Store:
         (`ON DELETE CASCADE`). Lo usa la retención (T2.9) para no guardar todo
         para siempre."""
         self._connection.executemany(_DELETE_SNAPSHOT, [(i,) for i in ids])
+
+    def save_programs(self, programs: Iterable[Program], seen_at: datetime) -> None:
+        """Guarda una revisión del inventario (T2B.2): actualiza (o inserta) cada
+        programa que se encontró y marca como quitados, justo en `seen_at`, los que
+        antes estaban activos y ya no aparecieron. Dos programas reales con el
+        mismo nombre (instalación de máquina y de usuario) se guardan como uno
+        solo: no hay otra forma de distinguirlos con lo que da el registro.
+        """
+        moment = seen_at.astimezone(UTC).isoformat(timespec="microseconds")
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            # Primero se marcan como quitados todos los que estaban activos; el
+            # propio guardado de abajo los "des-marca" (vuelve a poner `removed_at`
+            # en NULL) si siguen apareciendo. Así no hace falta un "NOT IN (...)"
+            # con una cantidad de valores que cambia cada vez.
+            self._connection.execute(_MARK_ALL_REMOVED, (moment,))
+            for program in programs:
+                name = _clean(program.name)
+                values = (
+                    _clean_optional(program.version),
+                    _clean_optional(program.publisher),
+                    _clean_optional(program.install_location),
+                    _clean_optional(program.install_date),
+                    program.estimated_size_bytes,
+                )
+                row = self._connection.execute(
+                    _SELECT_PROGRAM_ID_BY_NAME, (name,)
+                ).fetchone()
+                if row is None:
+                    self._connection.execute(
+                        _INSERT_PROGRAM, (name, *values, moment, moment)
+                    )
+                else:
+                    self._connection.execute(_UPDATE_PROGRAM, (*values, moment, name))
+            self._connection.execute("COMMIT")
+        except BaseException:
+            _rollback(self._connection)
+            raise
+
+    def active_programs(self) -> list[Program]:
+        """Los programas de la última revisión que no están marcados como
+        quitados (`removed_at` vacío), ordenados por nombre."""
+        rows = self._connection.execute(_SELECT_ACTIVE_PROGRAMS).fetchall()
+        return [
+            Program(
+                name=name,
+                version=version,
+                publisher=publisher,
+                install_location=install_location,
+                install_date=install_date,
+                estimated_size_bytes=estimated_size_bytes,
+                uninstall_string=None,
+            )
+            for (
+                name,
+                version,
+                publisher,
+                install_location,
+                install_date,
+                estimated_size_bytes,
+            ) in rows
+        ]
 
 
 def _clean(text: str) -> str:
