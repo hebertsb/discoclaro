@@ -179,6 +179,31 @@ def test_the_data_folder_reads_the_real_environment_by_default(monkeypatch):
     assert windows.default_data_dir() == Path("R:\\Otra\\Carpeta") / "discoclaro"
 
 
+def test_the_config_folder_is_discoclaro_inside_appdata():
+    environ = {"APPDATA": "R:\\Datos\\Roaming"}
+    expected = Path("R:\\Datos\\Roaming") / "discoclaro"
+    assert windows.default_config_dir(environ) == expected
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [
+        {},
+        {"APPDATA": ""},
+        {"APPDATA": "relativo\\carpeta"},
+        {"APPDATA": "\\sin\\unidad"},
+    ],
+)
+def test_the_config_folder_refuses_a_missing_or_relative_appdata(environ):
+    with pytest.raises(OSError):
+        windows.default_config_dir(environ)
+
+
+def test_the_config_folder_reads_the_real_environment_by_default(monkeypatch):
+    monkeypatch.setenv("APPDATA", "R:\\Otra\\Carpeta")
+    assert windows.default_config_dir() == Path("R:\\Otra\\Carpeta") / "discoclaro"
+
+
 @pytest.mark.parametrize(("answer", "expected"), [(1, True), (0, False), (4, True)])
 def test_is_admin_follows_the_windows_answer(answer, expected):
     assert windows.is_admin(lambda: answer) is expected

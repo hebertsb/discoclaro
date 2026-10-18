@@ -112,18 +112,32 @@ def measure_system_files(
     return found
 
 
+def _env_app_dir(environ: Mapping[str, str] | None, variable: str) -> Path:
+    environ = os.environ if environ is None else environ
+    base = environ.get(variable, "")
+    if not base or not ntpath.isabs(base) or not ntpath.splitdrive(base)[0]:
+        raise OSError(f"{variable} is not set to an absolute path")
+    return Path(base) / APP_FOLDER
+
+
 def default_data_dir(environ: Mapping[str, str] | None = None) -> Path:
     """Carpeta de datos propia de discoclaro: `%LOCALAPPDATA%\\discoclaro`.
 
-    Es el único sitio donde discoclaro guarda lo suyo. Lanza `OSError` si
+    Ahí se guardan las fotos; no se sincroniza entre equipos. Lanza `OSError` si
     `LOCALAPPDATA` falta o no es una ruta absoluta con unidad. `environ` se puede
     inyectar para probar sin tocar las variables reales.
     """
-    environ = os.environ if environ is None else environ
-    base = environ.get("LOCALAPPDATA", "")
-    if not base or not ntpath.isabs(base) or not ntpath.splitdrive(base)[0]:
-        raise OSError("LOCALAPPDATA is not set to an absolute path")
-    return Path(base) / APP_FOLDER
+    return _env_app_dir(environ, "LOCALAPPDATA")
+
+
+def default_config_dir(environ: Mapping[str, str] | None = None) -> Path:
+    """Carpeta de configuración propia de discoclaro: `%APPDATA%\\discoclaro`.
+
+    Ahí va `config.toml`, el que edita el usuario a mano (T2.6); a diferencia de la
+    carpeta de datos, esta sí es la "roaming" que Windows puede llevar entre equipos.
+    Lanza `OSError` si `APPDATA` falta o no es una ruta absoluta con unidad.
+    """
+    return _env_app_dir(environ, "APPDATA")
 
 
 def is_admin(is_user_an_admin: Callable[[], int] | None = None) -> bool:
