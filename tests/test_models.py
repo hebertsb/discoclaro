@@ -10,6 +10,7 @@ from discoclaro.domain.models import (
     DirectoryEntry,
     LargeFile,
     Node,
+    Program,
     ScanResult,
     Snapshot,
     SystemFile,
@@ -315,3 +316,43 @@ def test_an_unknown_kind_or_a_negative_size_is_rejected():
 def test_snapshot_arguments_must_be_named():
     with pytest.raises(TypeError):
         Snapshot(datetime(2026, 10, 17, tzinfo=UTC), "C:")
+
+
+def make_program(**changes):
+    fields = {
+        "name": "Acme App",
+        "version": "1.0",
+        "publisher": "Acme",
+        "install_location": "C:\\Program Files\\Acme",
+        "install_date": "20261017",
+        "estimated_size_bytes": 1024,
+        "uninstall_string": "C:\\Program Files\\Acme\\uninst.exe",
+    }
+    return Program(**{**fields, **changes})
+
+
+def test_a_program_needs_a_name():
+    with pytest.raises(ValueError):
+        make_program(name="")
+
+
+def test_a_program_can_have_no_estimated_size():
+    assert make_program(estimated_size_bytes=None).estimated_size_bytes is None
+
+
+def test_a_program_rejects_a_negative_estimated_size():
+    with pytest.raises(ValueError):
+        make_program(estimated_size_bytes=-1)
+
+
+def test_a_program_can_have_every_optional_field_missing():
+    program = Program(
+        name="Solo nombre",
+        version=None,
+        publisher=None,
+        install_location=None,
+        install_date=None,
+        estimated_size_bytes=None,
+        uninstall_string=None,
+    )
+    assert program.name == "Solo nombre"

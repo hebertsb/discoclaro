@@ -251,3 +251,29 @@ class Snapshot:
         """Si es de un volumen completo (se guarda por su nombre, `C:`) y no de una
         carpeta (se guarda por su ruta)."""
         return "\\" not in self.volume and "/" not in self.volume
+
+
+@dataclass(frozen=True, slots=True)
+class Program:
+    """Un programa instalado, leído del registro de Windows (T2B.1).
+
+    Todo viene de afuera (el registro), así que se guarda tal cual, sin
+    sanearlo: quien lo muestre tiene que escaparlo (`domain/policy.py`), igual que
+    una ruta del escaneo. `uninstall_string` es el texto que Windows usaría para
+    desinstalarlo; se guarda solo para mostrarlo, **nunca se ejecuta** desde
+    discoclaro (catálogo cerrado de tareas, no comandos libres).
+    """
+
+    name: str
+    version: str | None
+    publisher: str | None
+    install_location: str | None
+    install_date: str | None
+    estimated_size_bytes: int | None
+    uninstall_string: str | None
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("a program needs a name")
+        if self.estimated_size_bytes is not None and self.estimated_size_bytes < 0:
+            raise ValueError("estimated size cannot be negative")

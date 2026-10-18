@@ -683,3 +683,71 @@ def test_scheduled_task_command_treats_missing_arguments_as_empty():
         "C:\\python.exe",
         "",
     )
+
+
+def registry_entry(**fields):
+    base = {"DisplayName": "Un programa"}
+    base.update(fields)
+    return base
+
+
+def test_installed_programs_reads_the_basic_fields():
+    entry = registry_entry(
+        DisplayVersion="1.2.3",
+        Publisher="Acme",
+        InstallLocation="C:\\Program Files\\Acme",
+        InstallDate="20261017",
+        EstimatedSize=2048,
+        UninstallString='"C:\\Program Files\\Acme\\uninst.exe"',
+    )
+    [program] = windows.installed_programs(read_entries=lambda: [entry])
+    assert program.name == "Un programa"
+    assert program.version == "1.2.3"
+    assert program.publisher == "Acme"
+    assert program.install_location == "C:\\Program Files\\Acme"
+    assert program.install_date == "20261017"
+    assert program.estimated_size_bytes == 2048 * 1024
+    assert program.uninstall_string == '"C:\\Program Files\\Acme\\uninst.exe"'
+
+
+def test_installed_programs_skips_entries_without_a_display_name():
+    entries = [{"Publisher": "Acme"}, registry_entry(DisplayName="")]
+    assert windows.installed_programs(read_entries=lambda: entries) == []
+
+
+def test_installed_programs_fills_missing_optional_fields_with_none():
+    [program] = windows.installed_programs(read_entries=lambda: [registry_entry()])
+    assert program.version is None
+    assert program.publisher is None
+    assert program.install_location is None
+    assert program.install_date is None
+    assert program.estimated_size_bytes is None
+    assert program.uninstall_string is None
+
+
+def test_installed_programs_treats_an_empty_string_field_as_missing():
+    [program] = windows.installed_programs(
+        read_entries=lambda: [registry_entry(Publisher="")]
+    )
+    assert program.publisher is None
+
+
+def test_installed_programs_ignores_an_estimated_size_of_the_wrong_type():
+    [program] = windows.installed_programs(
+        read_entries=lambda: [registry_entry(EstimatedSize="not a number")]
+    )
+    assert program.estimated_size_bytes is None
+
+
+def test_installed_programs_processes_several_entries_in_order():
+    entries = [
+        registry_entry(DisplayName="Primero"),
+        registry_entry(DisplayName="Segundo"),
+    ]
+    programs = windows.installed_programs(read_entries=lambda: entries)
+    assert [p.name for p in programs] == ["Primero", "Segundo"]
+
+
+def test_installed_programs_defaults_to_the_real_registry_without_reading_it():
+    parameters = inspect.signature(windows.installed_programs).parameters
+    assert parameters["read_entries"].default is windows._read_all_uninstall_entries

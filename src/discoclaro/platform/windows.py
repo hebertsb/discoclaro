@@ -11,13 +11,14 @@ import ntpath
 import os
 import stat
 import subprocess
+import winreg
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from ctypes import wintypes
 from pathlib import Path
 
 from discoclaro.domain.classify import ENVIRONMENT_VARIABLES
-from discoclaro.domain.models import SystemFile
+from discoclaro.domain.models import Program, SystemFile
 
 logger = logging.getLogger(__name__)
 
@@ -421,3 +422,108 @@ def environment_variables(environ: Mapping[str, str] | None = None) -> dict[str,
         for token in ENVIRONMENT_VARIABLES
         if token.strip("%") in environ
     }
+
+
+# Las tres claves "Desinstalar" del registro (T2B.1): la de la máquina, la de los
+# programas de 32 bits en un Windows de 64, y la del usuario actual.
+_UNINSTALL_PATH = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+_UNINSTALL_ROOTS = (
+    (winreg.HKEY_LOCAL_MACHINE, _UNINSTALL_PATH),
+    (winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\" + _UNINSTALL_PATH),
+    (winreg.HKEY_CURRENT_USER, _UNINSTALL_PATH),
+)
+
+
+def _registry_subkey_values(hive: int, path: str) -> dict[str, object] | None:
+    """Los nombres y valores de una subclave, o `None` si no se pudo abrir."""
+    try:
+        key = winreg.OpenKey(hive, path)
+    except OSError:
+        return None
+    try:
+        values: dict[str, object] = {}
+        index = 0
+        while True:
+            try:
+                name, data, _ = winreg.EnumValue(key, index)
+            except OSError:
+                break
+            values[name] = data
+            index += 1
+        return values
+    finally:
+        winreg.CloseKey(key)
+
+
+def _registry_entries(hive: int, path: str) -> Iterable[dict[str, object]]:
+    """Las subclaves directas de una clave "Desinstalar", cada una con sus valores."""
+    try:
+        key = winreg.OpenKey(hive, path)
+    except OSError:
+        return
+    try:
+        index = 0
+        while True:
+            try:
+                subkey_name = winreg.EnumKey(key, index)
+            except OSError:
+                return
+            index += 1
+            values = _registry_subkey_values(hive, f"{path}\\{subkey_name}")
+            if values is not None:
+                yield values
+    finally:
+        winreg.CloseKey(key)
+
+
+def _read_all_uninstall_entries() -> Iterable[dict[str, object]]:
+    """Las subclaves de las tres raíces "Desinstalar" reales, una tras otra."""
+    for hive, path in _UNINSTALL_ROOTS:
+        yield from _registry_entries(hive, path)
+
+
+def _optional_registry_str(raw: dict[str, object], key: str) -> str | None:
+    value = raw.get(key)
+    return value if isinstance(value, str) and value else None
+
+
+def _build_program(raw: dict[str, object]) -> Program | None:
+    """Arma un `Program` de una subclave ya leída, o `None` si no tiene nombre.
+
+    Sin `DisplayName` no es un programa que alguien instaló a propósito: son
+    actualizaciones, componentes del sistema y otras subclaves que no le sirven al
+    usuario como inventario.
+    """
+    name = _optional_registry_str(raw, "DisplayName")
+    if name is None:
+        return None
+    size_kb = raw.get("EstimatedSize")
+    size_bytes = size_kb * 1024 if isinstance(size_kb, int) else None
+    return Program(
+        name=name,
+        version=_optional_registry_str(raw, "DisplayVersion"),
+        publisher=_optional_registry_str(raw, "Publisher"),
+        install_location=_optional_registry_str(raw, "InstallLocation"),
+        install_date=_optional_registry_str(raw, "InstallDate"),
+        estimated_size_bytes=size_bytes,
+        uninstall_string=_optional_registry_str(raw, "UninstallString"),
+    )
+
+
+def installed_programs(
+    *,
+    read_entries: Callable[
+        [], Iterable[dict[str, object]]
+    ] = _read_all_uninstall_entries,
+) -> list[Program]:
+    """Los programas instalados, de las tres claves "Desinstalar" del registro.
+
+    Es de solo lectura. `read_entries` se puede inyectar con datos simulados para
+    probar sin tocar el registro real.
+    """
+    programs = []
+    for raw in read_entries():
+        program = _build_program(raw)
+        if program is not None:
+            programs.append(program)
+    return programs
