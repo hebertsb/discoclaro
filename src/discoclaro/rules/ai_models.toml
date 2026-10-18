@@ -11,7 +11,7 @@ explanation = "Los modelos que bajó Ollama para correr localmente; pueden pesar
 
 [rule.suggested_action]
 type = "command"
-text = "ollama list y ollama rm <modelo>; para cambiar dónde se guardan, la variable OLLAMA_MODELS."
+text = "ollama list muestra los modelos; ollama rm seguido del nombre borra uno. Para cambiar dónde se guardan, la variable OLLAMA_MODELS."
 
 [[rule]]
 id = "hf-cache"

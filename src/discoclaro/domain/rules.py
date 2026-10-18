@@ -47,7 +47,8 @@ class Rule:
     `risk`: `safe` se regenera sin pérdida, `review` lo decide el usuario y
     `do_not_touch` solo se informa, nunca se ejecuta desde la herramienta. `task_id`,
     si está, solo puede nombrar una tarea del catálogo cerrado (fase 4); nunca trae un
-    comando propio.
+    comando propio. `verified` es falso para una regla que no viene del catálogo propio
+    de discoclaro (T2.11): el usuario la agregó aparte y nadie del proyecto la revisó.
     """
 
     id: str
@@ -59,6 +60,7 @@ class Rule:
     suggested_action: SuggestedAction | None = None
     reacquire: Reacquire | None = None
     task_id: str | None = None
+    verified: bool = True
 
     def __post_init__(self) -> None:
         if not self.id or not self.name or not self.category or not self.explanation:
