@@ -37,7 +37,7 @@ from discoclaro.services.check_service import CheckError
 from discoclaro.services.growth_service import Growth, GrowthError
 from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
-from discoclaro.services.schedule_service import ScheduleError
+from discoclaro.services.schedule_service import ScheduleError, TaskStatus
 
 COMMANDS = ("scan", "report", "growth", "check", "schedule")
 EXIT_CANCELLED = 130
@@ -328,25 +328,19 @@ def _schedule(action: str, target: str | None) -> int:
             print(t("schedule.removed" if removed else "schedule.not_installed"))
         else:
             result = schedule_service.status()
-            print(
-                t(
-                    "schedule.status_scan_installed"
-                    if result.scan_installed
-                    else "schedule.status_scan_not_installed"
-                )
-            )
-            print(
-                t(
-                    "schedule.status_check_installed"
-                    if result.check_installed
-                    else "schedule.status_check_not_installed"
-                )
-            )
+            print(t(f"schedule.status_scan_{_status_suffix(result.scan)}"))
+            print(t(f"schedule.status_check_{_status_suffix(result.check)}"))
     except ScheduleError as error:
         message = t(f"errors.{error.kind}", target=safe_text(error.target))
         print(message, file=sys.stderr)
         return 1
     return 0
+
+
+def _status_suffix(task: TaskStatus) -> str:
+    if not task.installed:
+        return "not_installed"
+    return "altered" if task.altered else "installed"
 
 
 def _check_lines(alerts: list[Alert]) -> list[str]:

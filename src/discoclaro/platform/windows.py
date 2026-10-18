@@ -11,6 +11,7 @@ import ntpath
 import os
 import stat
 import subprocess
+import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from ctypes import wintypes
 from pathlib import Path
@@ -365,6 +366,45 @@ def scheduled_task_exists(
         timeout=SCHEDULED_TASK_TIMEOUT_S,
     )
     return result.returncode == 0
+
+
+def scheduled_task_command(
+    name: str,
+    *,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> tuple[str, str] | None:
+    """El ejecutable y los argumentos que de verdad tiene registrados `name` ahora
+    mismo (T2.13), o `None` si no existe.
+
+    Lee el XML nativo del Programador de tareas (`/xml`), no el texto de `/query`
+    sin más: esos nombres de campo del XML son siempre los mismos, sin importar el
+    idioma de Windows (el texto de `/query` normal sí se traduce). Si el XML no se
+    pudo leer o no tiene la acción esperada, también devuelve `None`: no hay nada
+    confiable para comparar.
+    """
+    result = run(
+        [str(_schtasks_path()), "/query", "/tn", name, "/xml"],
+        capture_output=True,
+        text=True,
+        timeout=SCHEDULED_TASK_TIMEOUT_S,
+    )
+    if result.returncode != 0:
+        return None
+    if "<!DOCTYPE" in result.stdout:
+        # Un XML de tarea de verdad nunca trae DOCTYPE; si aparece uno, podría ser
+        # un intento de bomba de entidades. Se rechaza antes de parsear, sin gastar
+        # tiempo en seguir leyéndolo.
+        return None
+    try:
+        root = ElementTree.fromstring(result.stdout)  # noqa: S314
+    except ElementTree.ParseError:
+        return None
+    namespace = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+    command = root.find(".//t:Actions/t:Exec/t:Command", namespace)
+    if command is None or not command.text:
+        return None
+    arguments = root.find(".//t:Actions/t:Exec/t:Arguments", namespace)
+    return command.text, (arguments.text or "" if arguments is not None else "")
 
 
 def environment_variables(environ: Mapping[str, str] | None = None) -> dict[str, str]:

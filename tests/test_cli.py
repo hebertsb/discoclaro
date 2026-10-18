@@ -26,7 +26,11 @@ from discoclaro.services.check_service import CheckError
 from discoclaro.services.growth_service import Growth, GrowthError
 from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
-from discoclaro.services.schedule_service import ScheduleError, ScheduleStatus
+from discoclaro.services.schedule_service import (
+    ScheduleError,
+    ScheduleStatus,
+    TaskStatus,
+)
 
 GIB = 1024**3
 
@@ -1226,11 +1230,11 @@ def fake_schedule_remove(monkeypatch, removed=False):
     return calls
 
 
-def fake_schedule_status(monkeypatch, scan_installed=False, check_installed=False):
+def fake_schedule_status(monkeypatch, scan=None, check=None):
+    scan = scan or TaskStatus(installed=False)
+    check = check or TaskStatus(installed=False)
     monkeypatch.setattr(
-        cli.schedule_service,
-        "status",
-        lambda: ScheduleStatus(scan_installed, check_installed),
+        cli.schedule_service, "status", lambda: ScheduleStatus(scan, check)
     )
 
 
@@ -1293,7 +1297,7 @@ def test_schedule_remove_prints_not_installed_when_nothing_was_removed(
 
 
 def test_schedule_status_prints_both_tasks_not_installed(monkeypatch, capsys):
-    fake_schedule_status(monkeypatch, scan_installed=False, check_installed=False)
+    fake_schedule_status(monkeypatch)
     assert main(["schedule", "status"]) == 0
     assert capsys.readouterr().out == (
         "Escaneo programado: no instalado.\nChequeo programado: no instalado.\n"
@@ -1301,11 +1305,30 @@ def test_schedule_status_prints_both_tasks_not_installed(monkeypatch, capsys):
 
 
 def test_schedule_status_prints_both_tasks_installed(monkeypatch, capsys):
-    fake_schedule_status(monkeypatch, scan_installed=True, check_installed=True)
+    fake_schedule_status(
+        monkeypatch,
+        scan=TaskStatus(installed=True, altered=False),
+        check=TaskStatus(installed=True, altered=False),
+    )
     assert main(["schedule", "status"]) == 0
     assert capsys.readouterr().out == (
         "Escaneo programado: instalado.\nChequeo programado: instalado.\n"
     )
+
+
+def test_schedule_status_prints_altered_when_the_action_does_not_match(
+    monkeypatch, capsys
+):
+    fake_schedule_status(
+        monkeypatch,
+        scan=TaskStatus(installed=True, altered=True),
+        check=TaskStatus(installed=True, altered=False),
+    )
+    assert main(["schedule", "status"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert "no es la esperada" in lines[0]
+    assert "Puede haberse alterado a mano" in lines[0]
+    assert lines[1] == "Chequeo programado: instalado."
 
 
 def test_output_never_crashes_on_characters_the_console_cannot_write(monkeypatch):

@@ -1,5 +1,5 @@
-"""Pruebas del servicio de programación (T2.8): nunca tocan el Programador de
-tareas real ni el disco; `create`/`delete`/`exists` siempre se reemplazan.
+"""Pruebas del servicio de programación (T2.8, T2.13): nunca tocan el Programador de
+tareas real ni el disco; `create`/`delete`/`get_command` siempre se reemplazan.
 """
 
 import inspect
@@ -15,10 +15,13 @@ from discoclaro.services.schedule_service import (
     SCAN_TASK_NAME,
     ScheduleError,
     ScheduleStatus,
+    TaskStatus,
     install,
     remove,
     status,
 )
+
+PYTHON = "C:\\venv\\python.exe"
 
 VOLUMES = [Volume("C:", "C:\\", 1000, 400, 600), Volume("D:", "D:\\", 500, 100, 400)]
 
@@ -100,16 +103,77 @@ def test_remove_returns_false_when_neither_task_existed():
     assert remove(delete=lambda name: False) is False
 
 
-def test_status_reports_each_task_separately():
-    installed = {SCAN_TASK_NAME}
-    result = status(exists=lambda name: name in installed)
-    assert result == ScheduleStatus(scan_installed=True, check_installed=False)
+def fake_get_command(registered):
+    """`registered` es {nombre: (comando, argumentos)}; lo demás es "no instalada"."""
+    return lambda name: registered.get(name)
 
 
 def test_status_with_nothing_installed():
-    assert status(exists=lambda name: False) == ScheduleStatus(
-        scan_installed=False, check_installed=False
+    assert status(python=PYTHON, get_command=fake_get_command({})) == ScheduleStatus(
+        scan=TaskStatus(installed=False), check=TaskStatus(installed=False)
     )
+
+
+def test_status_reports_each_task_installed_and_matching():
+    registered = {
+        SCAN_TASK_NAME: (PYTHON, "-m discoclaro scan C:"),
+        CHECK_TASK_NAME: (PYTHON, "-m discoclaro check"),
+    }
+    result = status(python=PYTHON, get_command=fake_get_command(registered))
+    assert result == ScheduleStatus(
+        scan=TaskStatus(installed=True, altered=False),
+        check=TaskStatus(installed=True, altered=False),
+    )
+
+
+def test_status_reports_only_one_task_installed():
+    registered = {SCAN_TASK_NAME: (PYTHON, "-m discoclaro scan C:")}
+    result = status(python=PYTHON, get_command=fake_get_command(registered))
+    assert result.scan.installed is True
+    assert result.check.installed is False
+
+
+def test_status_scan_accepts_any_single_target():
+    for target in ("D:", "C:\\Users\\x", '"C:\\My Folder"'):
+        registered = {SCAN_TASK_NAME: (PYTHON, f"-m discoclaro scan {target}")}
+        result = status(python=PYTHON, get_command=fake_get_command(registered))
+        assert result.scan == TaskStatus(installed=True, altered=False)
+
+
+def test_status_scan_is_altered_when_the_executable_differs():
+    registered = {SCAN_TASK_NAME: ("C:\\evil.exe", "-m discoclaro scan C:")}
+    result = status(python=PYTHON, get_command=fake_get_command(registered))
+    assert result.scan == TaskStatus(installed=True, altered=True)
+
+
+def test_status_scan_is_altered_with_extra_text_after_the_target():
+    registered = {SCAN_TASK_NAME: (PYTHON, "-m discoclaro scan C: & del *")}
+    result = status(python=PYTHON, get_command=fake_get_command(registered))
+    assert result.scan == TaskStatus(installed=True, altered=True)
+
+
+def test_status_scan_is_altered_with_no_target_at_all():
+    registered = {SCAN_TASK_NAME: (PYTHON, "-m discoclaro scan")}
+    result = status(python=PYTHON, get_command=fake_get_command(registered))
+    assert result.scan == TaskStatus(installed=True, altered=True)
+
+
+def test_status_scan_is_altered_pointing_at_another_module():
+    registered = {SCAN_TASK_NAME: (PYTHON, "-m otherpackage scan C:")}
+    result = status(python=PYTHON, get_command=fake_get_command(registered))
+    assert result.scan == TaskStatus(installed=True, altered=True)
+
+
+def test_status_check_must_match_exactly_with_no_extra_arguments():
+    registered = {CHECK_TASK_NAME: (PYTHON, "-m discoclaro check --extra")}
+    result = status(python=PYTHON, get_command=fake_get_command(registered))
+    assert result.check == TaskStatus(installed=True, altered=True)
+
+
+def test_status_check_is_altered_when_the_executable_differs():
+    registered = {CHECK_TASK_NAME: ("C:\\evil.exe", "-m discoclaro check")}
+    result = status(python=PYTHON, get_command=fake_get_command(registered))
+    assert result.check == TaskStatus(installed=True, altered=True)
 
 
 def test_the_real_adapters_are_the_defaults_without_calling_them():
@@ -122,7 +186,8 @@ def test_the_real_adapters_are_the_defaults_without_calling_them():
         inspect.signature(remove).parameters["delete"].default
         is windows.remove_scheduled_task
     )
+    assert inspect.signature(status).parameters["python"].default is sys.executable
     assert (
-        inspect.signature(status).parameters["exists"].default
-        is windows.scheduled_task_exists
+        inspect.signature(status).parameters["get_command"].default
+        is windows.scheduled_task_command
     )

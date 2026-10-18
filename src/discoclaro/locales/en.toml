@@ -100,8 +100,10 @@ removed = "The scheduled tasks were removed."
 not_installed = "There were no scheduled tasks to remove."
 status_scan_installed = "Scheduled scan: installed."
 status_scan_not_installed = "Scheduled scan: not installed."
+status_scan_altered = "Scheduled scan: installed, but its action is not what was expected. It may have been altered by hand; reinstall it with \"discoclaro schedule install <target>\"."
 status_check_installed = "Scheduled check: installed."
 status_check_not_installed = "Scheduled check: not installed."
+status_check_altered = "Scheduled check: installed, but its action is not what was expected. It may have been altered by hand; reinstall it with \"discoclaro schedule install <target>\"."
 
 [alerts]
 title_volume_low_free = "Low free space"

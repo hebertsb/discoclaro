@@ -100,8 +100,10 @@ removed = "Se quitaron las tareas programadas."
 not_installed = "No había tareas programadas para quitar."
 status_scan_installed = "Escaneo programado: instalado."
 status_scan_not_installed = "Escaneo programado: no instalado."
+status_scan_altered = "Escaneo programado: instalado, pero su acción no es la esperada. Puede haberse alterado a mano; volvé a instalarlo con «discoclaro schedule install <destino>»."
 status_check_installed = "Chequeo programado: instalado."
 status_check_not_installed = "Chequeo programado: no instalado."
+status_check_altered = "Chequeo programado: instalado, pero su acción no es la esperada. Puede haberse alterado a mano; volvé a instalarlo con «discoclaro schedule install <destino>»."
 
 [alerts]
 title_volume_low_free = "Poco espacio libre"

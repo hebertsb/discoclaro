@@ -500,13 +500,15 @@ def test_environment_variables_reads_the_real_environment_by_default():
     assert all(key in windows.ENVIRONMENT_VARIABLES for key in found)
 
 
-def fake_run(returncode=0, stderr=""):
+def fake_run(returncode=0, stderr="", stdout=""):
     """Reemplaza `subprocess.run`; devuelve (los llamados, la función falsa)."""
     calls = []
 
     def run(args, **kwargs):
         calls.append((args, kwargs))
-        return types.SimpleNamespace(returncode=returncode, stderr=stderr, stdout="")
+        return types.SimpleNamespace(
+            returncode=returncode, stderr=stderr, stdout=stdout
+        )
 
     return calls, run
 
@@ -600,6 +602,84 @@ def test_the_real_subprocess_run_is_the_default_without_calling_it():
         windows.create_scheduled_task,
         windows.remove_scheduled_task,
         windows.scheduled_task_exists,
+        windows.scheduled_task_command,
     ):
         parameters = inspect.signature(function).parameters
         assert parameters["run"].default is subprocess.run
+
+
+_REAL_TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <URI>\\discoclaro\\scan</URI>
+  </RegistrationInfo>
+  <Actions Context="Author">
+    <Exec>
+      <Command>D:\\venv\\Scripts\\python.exe</Command>
+      <Arguments>-m discoclaro scan C:</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"""
+
+
+def test_scheduled_task_command_reads_the_command_and_arguments_from_the_real_xml():
+    _, run = fake_run(returncode=0, stdout=_REAL_TASK_XML)
+    assert windows.scheduled_task_command("\\discoclaro\\scan", run=run) == (
+        "D:\\venv\\Scripts\\python.exe",
+        "-m discoclaro scan C:",
+    )
+
+
+def test_scheduled_task_command_uses_the_xml_query():
+    calls, run = fake_run(stdout=_REAL_TASK_XML)
+    windows.scheduled_task_command("\\discoclaro\\scan", run=run)
+    (args, _) = calls[0]
+    assert args[1:] == ["/query", "/tn", "\\discoclaro\\scan", "/xml"]
+
+
+def test_scheduled_task_command_is_none_when_the_task_does_not_exist():
+    _, run = fake_run(returncode=1)
+    assert windows.scheduled_task_command("\\discoclaro\\scan", run=run) is None
+
+
+def test_scheduled_task_command_is_none_for_invalid_xml():
+    _, run = fake_run(stdout="not xml at all")
+    assert windows.scheduled_task_command("\\discoclaro\\scan", run=run) is None
+
+
+def test_scheduled_task_command_is_none_without_an_exec_action():
+    no_exec = """<?xml version="1.0"?>
+<Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Actions Context="Author"></Actions>
+</Task>
+"""
+    _, run = fake_run(stdout=no_exec)
+    assert windows.scheduled_task_command("\\discoclaro\\scan", run=run) is None
+
+
+def test_scheduled_task_command_is_none_with_a_doctype():
+    """Un XML de tarea de verdad nunca trae DOCTYPE; se rechaza sin parsearlo."""
+    hostile = (
+        '<?xml version="1.0"?>\n'
+        '<!DOCTYPE Task [<!ENTITY x "y">]>\n'
+        '<Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">'
+        "<Actions><Exec><Command>&x;</Command></Exec></Actions></Task>"
+    )
+    _, run = fake_run(stdout=hostile)
+    assert windows.scheduled_task_command("\\discoclaro\\scan", run=run) is None
+
+
+def test_scheduled_task_command_treats_missing_arguments_as_empty():
+    no_arguments = """<?xml version="1.0"?>
+<Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Actions Context="Author">
+    <Exec><Command>C:\\python.exe</Command></Exec>
+  </Actions>
+</Task>
+"""
+    _, run = fake_run(stdout=no_arguments)
+    assert windows.scheduled_task_command("\\discoclaro\\scan", run=run) == (
+        "C:\\python.exe",
+        "",
+    )
