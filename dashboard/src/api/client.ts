@@ -1,4 +1,4 @@
-import type { PlanOut, SummaryOut } from "./types";
+import type { PlanOut, SummaryOut, TreeOut } from "./types";
 
 // Rutas relativas a propósito: en producción (T3.8) la misma API sirve el
 // HTML/JS construido, un solo origen, sin CORS; en desarrollo, el proxy de
@@ -31,4 +31,9 @@ export function fetchSummary(): Promise<SummaryOut> {
 
 export function fetchPlan(): Promise<PlanOut> {
   return getJson<PlanOut>("/plan");
+}
+
+export function fetchTree(path: string | null): Promise<TreeOut> {
+  const query = path === null ? "" : `?path=${encodeURIComponent(path)}`;
+  return getJson<TreeOut>(`/tree${query}`);
 }

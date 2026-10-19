@@ -24,6 +24,20 @@ export interface FolderGrowthOut {
   is_new: boolean;
 }
 
+export interface NodeOut {
+  path: string;
+  size_bytes: number;
+  n_files: number;
+  depth: number;
+}
+
+export interface TreeOut {
+  snapshot_id: number;
+  volume: string;
+  node: NodeOut | null;
+  children: NodeOut[];
+}
+
 export interface VolumeSummaryOut {
   volume: VolumeOut;
   snapshot_id: number | null;
