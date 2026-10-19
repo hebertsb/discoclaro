@@ -894,3 +894,123 @@ def test_system_drive_raises_when_empty():
 def test_system_drive_reads_the_real_environment_by_default(monkeypatch):
     monkeypatch.setenv("SystemDrive", "D:")
     assert windows.system_drive() == "D:"
+
+
+def fake_cim_query(responses):
+    """`responses` es una lista de filas falsas (una por llamada, en orden);
+    se consumen en orden de llamada."""
+    calls = []
+    remaining = list(responses)
+
+    def query(command):
+        calls.append(command)
+        return remaining.pop(0) if remaining else None
+
+    return calls, query
+
+
+def test_pagefile_advice_parses_the_real_usage_and_setting_shape():
+    _, query = fake_cim_query(
+        [
+            [
+                {
+                    "Name": "D:\\pagefile.sys",
+                    "AllocatedBaseSize": "49152",
+                    "PeakUsage": "6187",
+                }
+            ],
+            [],
+        ]
+    )
+    advice = windows.pagefile_advice("D:", query=query)
+    assert advice.path == "D:\\pagefile.sys"
+    assert advice.peak_used_bytes == 6187 * 1024 * 1024
+    assert advice.configured_bytes is None
+
+
+def test_pagefile_advice_reads_a_manually_configured_maximum():
+    _, query = fake_cim_query(
+        [
+            [
+                {
+                    "Name": "C:\\pagefile.sys",
+                    "AllocatedBaseSize": "4096",
+                    "PeakUsage": "1000",
+                }
+            ],
+            [{"Name": "C:\\pagefile.sys", "MaximumSize": "4096"}],
+        ]
+    )
+    advice = windows.pagefile_advice("C:", query=query)
+    assert advice.configured_bytes == 4096
+
+
+def test_pagefile_advice_is_none_without_any_page_file():
+    _, query = fake_cim_query([[]])
+    assert windows.pagefile_advice("C:", query=query) is None
+
+
+def test_pagefile_advice_is_none_when_the_volume_has_no_page_file():
+    _, query = fake_cim_query(
+        [[{"Name": "D:\\pagefile.sys", "AllocatedBaseSize": "1", "PeakUsage": "1"}], []]
+    )
+    assert windows.pagefile_advice("C:", query=query) is None
+
+
+def test_pagefile_advice_is_none_when_the_query_fails():
+    _, query = fake_cim_query([None])
+    assert windows.pagefile_advice("C:", query=query) is None
+
+
+def test_restore_advice_parses_the_real_config_shape():
+    _, query = fake_cim_query([[{"DiskPercent": "15"}], []])
+    advice = windows.restore_advice("C:", 100 * 1024**3, query=query)
+    assert advice.drive == "C:"
+    assert advice.configured_bytes == round(100 * 1024**3 * 0.15)
+    assert advice.used_bytes is None
+
+
+def test_restore_advice_reads_real_usage_when_present():
+    _, query = fake_cim_query(
+        [
+            [{"DiskPercent": "15"}],
+            [{"Volume": "\\\\?\\Volume{guid}\\ (C:)", "UsedSpace": "123456"}],
+        ]
+    )
+    advice = windows.restore_advice("C:", 100 * 1024**3, query=query)
+    assert advice.used_bytes == 123456
+
+
+def test_restore_advice_is_none_without_a_configured_percent():
+    _, query = fake_cim_query([[]])
+    assert windows.restore_advice("C:", 1000, query=query) is None
+
+
+def test_restore_advice_is_none_when_the_query_fails():
+    _, query = fake_cim_query([None])
+    assert windows.restore_advice("C:", 1000, query=query) is None
+
+
+def test_query_cim_csv_parses_real_convertto_csv_output():
+    calls, run = fake_run(stdout='"Name","PeakUsage"\r\n"D:\\pagefile.sys","6187"\r\n')
+    rows = windows._query_cim_csv("Get-CimInstance x", run=run)
+    assert rows == [{"Name": "D:\\pagefile.sys", "PeakUsage": "6187"}]
+    (args, _) = calls[0]
+    assert args[0].lower().endswith("powershell.exe")
+    assert "-NoProfile" in args
+    assert "-NonInteractive" in args
+
+
+def test_query_cim_csv_is_an_empty_list_with_no_output():
+    _, run = fake_run(stdout="")
+    assert windows._query_cim_csv("Get-CimInstance x", run=run) == []
+
+
+def test_query_cim_csv_is_none_when_the_command_fails():
+    _, run = fake_run(returncode=1)
+    assert windows._query_cim_csv("Get-CimInstance x", run=run) is None
+
+
+def test_query_cim_csv_is_none_when_the_output_is_too_big():
+    _, run = fake_run(stdout="x" * 1_000_001)
+    assert windows._query_cim_csv("Get-CimInstance x", run=run) is None

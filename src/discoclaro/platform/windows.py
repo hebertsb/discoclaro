@@ -4,7 +4,9 @@ Aquí irá también el Programador de tareas. Todo lo que dependa de Windows viv
 módulo, para poder agregar Linux y macOS sin tocar el núcleo.
 """
 
+import csv
 import ctypes
+import io
 import logging
 import msvcrt
 import ntpath
@@ -19,6 +21,7 @@ from pathlib import Path
 
 from discoclaro.domain.classify import ENVIRONMENT_VARIABLES
 from discoclaro.domain.models import Program, SystemFile
+from discoclaro.domain.system_advisor import PageFileAdvice, RestoreAdvice
 
 logger = logging.getLogger(__name__)
 
@@ -605,3 +608,136 @@ def system_drive(environ: Mapping[str, str] | None = None) -> str:
     if not drive:
         raise OSError("SystemDrive is not set")
     return drive
+
+
+def _powershell_path(environ: Mapping[str, str] | None = None) -> Path:
+    """Ruta completa de `powershell.exe`: nunca se confía en que esté en el PATH."""
+    environ = os.environ if environ is None else environ
+    windir = environ.get("WINDIR", "")
+    if not windir:
+        raise OSError("WINDIR is not set")
+    return Path(windir) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+
+
+def _query_cim_csv(
+    command: str,
+    *,
+    timeout: float = SCHEDULED_TASK_TIMEOUT_S,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> list[dict[str, str]] | None:
+    """Corre `command` (ya armado, de solo lectura: `Get-CimInstance ... |
+    ConvertTo-Csv`) por PowerShell y lo lee como filas de texto. `None` si
+    falló o tardó de más; lista vacía si no hay ninguna fila (una clase CIM
+    sin ninguna instancia, el caso normal de un archivo de paginación
+    administrado por el sistema, o de una unidad sin ningún punto de
+    restauración)."""
+    try:
+        result = run(
+            [
+                str(_powershell_path()),
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                command,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0 or len(result.stdout) > 1_000_000:
+        return None
+    if not result.stdout.strip():
+        return []
+    return list(csv.DictReader(io.StringIO(result.stdout)))
+
+
+def pagefile_advice(
+    volume: str,
+    *,
+    query: Callable[[str], list[dict[str, str]] | None] = _query_cim_csv,
+) -> PageFileAdvice | None:
+    """El archivo de paginación de `volume` ("C:"), de su propia huella en
+    Windows (T2C.6): lo que Windows tiene configurado (`None` si lo
+    administra solo, el caso más común) y el pico de uso real. `None` si no
+    hay ningún archivo de paginación en esa unidad, o si no se pudo
+    preguntar."""
+    usage_rows = query(
+        "Get-CimInstance Win32_PageFileUsage | "
+        "Select-Object Name,AllocatedBaseSize,PeakUsage | "
+        "ConvertTo-Csv -NoTypeInformation"
+    )
+    if not usage_rows:
+        return None
+    drive = volume.rstrip("\\/").upper()
+    matching = [
+        row for row in usage_rows if row.get("Name", "").upper().startswith(drive)
+    ]
+    if not matching:
+        return None
+    row = matching[0]
+    path = row.get("Name", "")
+    peak = _optional_mb_to_bytes(row.get("PeakUsage"))
+    setting_rows = query(
+        "Get-CimInstance Win32_PageFileSetting | "
+        "Select-Object Name,MaximumSize | ConvertTo-Csv -NoTypeInformation"
+    )
+    configured = None
+    if setting_rows:
+        for setting in setting_rows:
+            if setting.get("Name", "").upper().startswith(drive):
+                configured = _optional_bytes(setting.get("MaximumSize"))
+                break
+    return PageFileAdvice(path=path, configured_bytes=configured, peak_used_bytes=peak)
+
+
+def restore_advice(
+    volume: str,
+    total_bytes: int,
+    *,
+    query: Callable[[str], list[dict[str, str]] | None] = _query_cim_csv,
+) -> RestoreAdvice | None:
+    """El almacenamiento de la restauración del sistema de `volume` ("C:")
+    (T2C.6): el máximo configurado (un porcentaje de `total_bytes`, lo único
+    que da Windows) y lo que de verdad hay usado ahora (`None` si no hay
+    ningún punto de restauración todavía). `None` si no se pudo preguntar la
+    configuración."""
+    config_rows = query(
+        "Get-CimInstance -Namespace root\\default -ClassName SystemRestoreConfig | "
+        "Select-Object DiskPercent | ConvertTo-Csv -NoTypeInformation"
+    )
+    if not config_rows:
+        return None
+    percent = _optional_bytes(config_rows[0].get("DiskPercent"))
+    if percent is None:
+        return None
+    configured_bytes = round(total_bytes * percent / 100)
+    storage_rows = query(
+        "Get-CimInstance Win32_ShadowStorage | "
+        "Select-Object Volume,UsedSpace | ConvertTo-Csv -NoTypeInformation"
+    )
+    used = None
+    if storage_rows:
+        drive = volume.rstrip("\\/").upper()
+        for row in storage_rows:
+            if drive in row.get("Volume", "").upper():
+                used = _optional_bytes(row.get("UsedSpace"))
+                break
+    return RestoreAdvice(
+        drive=volume, configured_bytes=configured_bytes, used_bytes=used
+    )
+
+
+def _optional_mb_to_bytes(value: str | None) -> int | None:
+    parsed = _optional_bytes(value)
+    return None if parsed is None else parsed * 1024 * 1024
+
+
+def _optional_bytes(value: str | None) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
