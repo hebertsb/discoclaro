@@ -19,6 +19,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
+from discoclaro.domain.decisions import Decision
 from discoclaro.domain.footprint import Footprint
 from discoclaro.domain.models import LargeFile, Node, Program, Snapshot
 from discoclaro.platform import windows
@@ -153,6 +154,24 @@ MIGRATIONS = (
             "PRAGMA user_version = 5",
         ),
     ),
+    (
+        6,
+        (
+            # Decisiones del usuario sobre algo puntual (T2C.4): una fila por
+            # `target`, la última que se guardó. `status` no lleva una lista
+            # cerrada aquí a propósito, la misma razón que `program_footprints`
+            # en T2B.2: la define `domain/decisions.py`.
+            """
+            CREATE TABLE decisions (
+                target TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                note TEXT,
+                decided_at TEXT NOT NULL
+            )
+            """,
+            "PRAGMA user_version = 6",
+        ),
+    ),
 )
 
 _INSERT_SNAPSHOT = """
@@ -218,6 +237,18 @@ _UPSERT_ALERT = """
     INSERT INTO alerts (kind, target, fired_at) VALUES (?, ?, ?)
     ON CONFLICT (kind, target) DO UPDATE SET fired_at = excluded.fired_at
 """
+
+_UPSERT_DECISION = """
+    INSERT INTO decisions (target, status, note, decided_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT (target) DO UPDATE SET
+        status = excluded.status, note = excluded.note, decided_at = excluded.decided_at
+"""
+
+_SELECT_DECISION = "SELECT status, note, decided_at FROM decisions WHERE target = ?"
+
+_SELECT_ALL_DECISIONS = (
+    "SELECT target, status, note, decided_at FROM decisions ORDER BY target"
+)
 
 _SELECT_PROGRAM_ID_BY_NAME = "SELECT id FROM programs WHERE name = ?"
 
@@ -569,6 +600,49 @@ class Store:
                 reason=reason,
             )
             for path, size_bytes, confidence, reason in rows
+        ]
+
+    def save_decision(
+        self, target: str, status: str, note: str | None, decided_at: datetime
+    ) -> None:
+        """Guarda la decisión sobre `target` (T2C.4): reemplaza la anterior,
+        si había una. No valida `status` (eso lo hace `domain/decisions.py`
+        antes de llamar acá, igual que con `program_footprints.confidence`)."""
+        self._connection.execute(
+            _UPSERT_DECISION,
+            (
+                _clean(target),
+                _clean(status),
+                _clean_optional(note),
+                decided_at.astimezone(UTC).isoformat(timespec="microseconds"),
+            ),
+        )
+
+    def decision_of(self, target: str) -> Decision | None:
+        """La decisión guardada sobre `target`, o `None` si nunca se decidió
+        nada."""
+        row = self._connection.execute(_SELECT_DECISION, (_clean(target),)).fetchone()
+        if row is None:
+            return None
+        status, note, decided_at = row
+        return Decision(
+            target=target,
+            status=status,
+            note=note,
+            decided_at=datetime.fromisoformat(decided_at),
+        )
+
+    def all_decisions(self) -> list[Decision]:
+        """Todas las decisiones guardadas, ordenadas por `target`."""
+        rows = self._connection.execute(_SELECT_ALL_DECISIONS).fetchall()
+        return [
+            Decision(
+                target=target,
+                status=status,
+                note=note,
+                decided_at=datetime.fromisoformat(decided_at),
+            )
+            for target, status, note, decided_at in rows
         ]
 
 

@@ -78,7 +78,7 @@ def count(store, table):
 
 def test_open_creates_the_schema_with_wal_and_foreign_keys(store):
     connection = store._connection
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
     assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     tables = connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -89,6 +89,7 @@ def test_open_creates_the_schema_with_wal_and_foreign_keys(store):
         "alerts",
         "programs",
         "program_footprints",
+        "decisions",
     }
     indexes = connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL"
@@ -555,6 +556,7 @@ def test_hostile_names_are_stored_and_recovered_verbatim_and_the_tables_survive(
         "alerts",
         "programs",
         "program_footprints",
+        "decisions",
     }
     assert count(store, "snapshots") == 1
     assert count(store, "nodes") == len(HOSTILE)
@@ -702,7 +704,7 @@ def test_a_version_1_database_is_migrated_keeping_its_photos(db_path):
         assert (old.id, old.scanned_bytes, old.duplicate_bytes) == (1, 300, 0)
         store.save_snapshot(make_snapshot(duplicate_bytes=50), [])
         assert store.snapshots("C:")[0].duplicate_bytes == 50
-    assert raw_query(db_path, "PRAGMA user_version") == [(5,)]
+    assert raw_query(db_path, "PRAGMA user_version") == [(6,)]
 
 
 def test_migrations_are_applied_one_version_at_a_time(db_path, monkeypatch):
@@ -738,3 +740,49 @@ def test_the_store_only_writes_its_own_files(tmp_path, db_path):
     names = {path.name for path in tmp_path.iterdir()}
     allowed = {"discoclaro.db", "discoclaro.db-wal", "discoclaro.db-shm"}
     assert names <= allowed
+
+
+def test_decision_of_an_undecided_target_is_none(store):
+    assert store.decision_of("C:\\Program Files\\Acme") is None
+
+
+def test_save_decision_can_be_read_back(store):
+    store.save_decision("C:\\Program Files\\Acme", "protected", "por si acaso", T0)
+    decision = store.decision_of("C:\\Program Files\\Acme")
+    assert decision.target == "C:\\Program Files\\Acme"
+    assert decision.status == "protected"
+    assert decision.note == "por si acaso"
+    assert decision.decided_at == T0
+
+
+def test_save_decision_without_a_note_is_none(store):
+    store.save_decision("x", "pending", None, T0)
+    assert store.decision_of("x").note is None
+
+
+def test_saving_a_decision_again_replaces_the_previous_one(store):
+    store.save_decision("x", "protected", "primero", T0)
+    later = T0 + timedelta(days=1)
+    store.save_decision("x", "ignored", "segundo", later)
+    decision = store.decision_of("x")
+    assert decision.status == "ignored"
+    assert decision.note == "segundo"
+    assert decision.decided_at == later
+
+
+def test_all_decisions_is_empty_without_any(store):
+    assert store.all_decisions() == []
+
+
+def test_all_decisions_are_sorted_by_target(store):
+    store.save_decision("z", "pending", None, T0)
+    store.save_decision("a", "protected", None, T0)
+    assert [d.target for d in store.all_decisions()] == ["a", "z"]
+
+
+def test_a_decision_with_lone_surrogates_round_trips(store):
+    hostile = "C:\\ghost\ud800name"
+    store.save_decision(hostile, "pending", "nota\ud800rota", T0)
+    decision = store.decision_of("C:\\ghost\ufffdname")
+    assert decision.target == "C:\\ghost\ufffdname"
+    assert decision.note == "nota\ufffdrota"
