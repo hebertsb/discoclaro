@@ -1,18 +1,27 @@
 import { useState } from "react";
 import Resumen from "./components/Resumen";
 import QueOcupa from "./components/QueOcupa";
+import Categorias from "./components/Categorias";
 
-// Navegación mínima de dos pestañas: la barra lateral/inferior real (brief
-// de T3.2, sección 13.2) llega cuando haya más de dos o tres vistas.
-type Screen = "resumen" | "que-ocupa";
+// Navegación mínima de pestañas: la barra lateral/inferior real (brief
+// de T3.2, sección 13.2) llega cuando haya más vistas.
+type Screen = "resumen" | "que-ocupa" | "categorias";
 
 const SCREENS: { id: Screen; label: string }[] = [
   { id: "resumen", label: "Resumen" },
   { id: "que-ocupa", label: "Qué ocupa" },
+  { id: "categorias", label: "Categorías" },
 ];
+
+const VIEWS: Record<Screen, () => React.JSX.Element> = {
+  resumen: Resumen,
+  "que-ocupa": QueOcupa,
+  categorias: Categorias,
+};
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("resumen");
+  const View = VIEWS[screen];
 
   return (
     <>
@@ -50,7 +59,7 @@ export default function App() {
           ))}
         </nav>
       </header>
-      {screen === "resumen" ? <Resumen /> : <QueOcupa />}
+      <View />
     </>
   );
 }

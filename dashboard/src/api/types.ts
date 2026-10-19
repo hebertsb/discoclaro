@@ -38,6 +38,12 @@ export interface TreeOut {
   children: NodeOut[];
 }
 
+export interface CategoryTotalOut {
+  category: string;
+  size_bytes: number;
+  folders: number;
+}
+
 export interface VolumeSummaryOut {
   volume: VolumeOut;
   snapshot_id: number | null;

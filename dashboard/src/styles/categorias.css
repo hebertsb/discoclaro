@@ -1,0 +1,76 @@
+/* Fila de categoría: en celular, el nombre/tamaño/cantidad se acomodan en
+   una línea que puede envolver, y la barra ocupa su propia línea completa
+   debajo. Desde los 560 px entran todas en una sola fila. Las piezas de
+   ancho fijo SIEMPRE necesitan poder encogerse (min-width: 0 o auto-size):
+   sin eso, el contenido no cabe en una pantalla angosta y algo se corta. */
+.cat-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: var(--space-2);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.cat-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cat-name {
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.cat-size {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.cat-count {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.cat-bar-track {
+  flex: 1 1 100%;
+  order: 10;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.cat-bar-fill {
+  height: 100%;
+}
+
+@media (min-width: 560px) {
+  .cat-name {
+    flex: 0 1 160px;
+  }
+  .cat-bar-track {
+    order: 0;
+    flex: 1 1 120px;
+    min-width: 60px;
+  }
+  .cat-size {
+    flex: 0 0 auto;
+    min-width: 80px;
+    text-align: right;
+    margin-left: 0;
+  }
+  .cat-count {
+    flex: 0 0 auto;
+    min-width: 80px;
+    text-align: right;
+  }
+}
