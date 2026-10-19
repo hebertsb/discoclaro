@@ -14,10 +14,19 @@ from pydantic import BaseModel
 from discoclaro.domain.categories import CategoryTotal
 from discoclaro.domain.growth import CategoryGrowth, FolderGrowth
 from discoclaro.domain.models import Node, Snapshot, Volume
-from discoclaro.services import growth_service, report_service, volumes_service
+from discoclaro.domain.plan import PlanItem
+from discoclaro.domain.unexplained import Unexplained
+from discoclaro.services import (
+    growth_service,
+    report_service,
+    summary_service,
+    volumes_service,
+)
 from discoclaro.services.growth_service import GrowthError
+from discoclaro.services.plan_service import PlanError, run_plan
 from discoclaro.services.report_service import ReportError
 from discoclaro.services.snapshots_service import SnapshotsError, run_snapshots
+from discoclaro.services.summary_service import SummaryError
 from discoclaro.services.tree_service import TreeError, run_tree
 
 DEFAULT_HOST = "127.0.0.1"
@@ -96,6 +105,41 @@ class GrowthOut(BaseModel):
     by_category: list[CategoryGrowthOut] | None
 
 
+class UnexplainedOut(BaseModel):
+    size_bytes: int
+    percent_of_used: float
+    exceeds_threshold: bool
+
+
+class VolumeSummaryOut(BaseModel):
+    volume: VolumeOut
+    snapshot_id: int | None
+    taken_at: str | None
+    unexplained: UnexplainedOut | None
+    days_until_full: float | None
+    top_growth: FolderGrowthOut | None
+
+
+class SummaryOut(BaseModel):
+    volumes: list[VolumeSummaryOut]
+
+
+class PlanItemOut(BaseModel):
+    level: str
+    program: str
+    name: str
+    size_bytes: int
+    reason: str
+    target: str
+
+
+class PlanOut(BaseModel):
+    safe_bytes: int
+    review_bytes: int
+    move_bytes: int
+    items: list[PlanItemOut]
+
+
 def _as_http_error(kind: str) -> HTTPException:
     if kind in _SERVER_ERROR_KINDS:
         return HTTPException(status_code=503, detail=kind)
@@ -162,6 +206,42 @@ def _category_growth_out(growth: CategoryGrowth) -> CategoryGrowthOut:
         before_bytes=growth.before_bytes,
         after_bytes=growth.after_bytes,
         grown_bytes=growth.grown_bytes,
+    )
+
+
+def _unexplained_out(unexplained: Unexplained) -> UnexplainedOut:
+    return UnexplainedOut(
+        size_bytes=unexplained.size_bytes,
+        percent_of_used=unexplained.percent_of_used,
+        exceeds_threshold=unexplained.exceeds_threshold,
+    )
+
+
+def _volume_summary_out(summary: summary_service.VolumeSummary) -> VolumeSummaryOut:
+    return VolumeSummaryOut(
+        volume=_volume_out(summary.volume),
+        snapshot_id=None if summary.snapshot is None else summary.snapshot.id,
+        taken_at=None
+        if summary.snapshot is None
+        else summary.snapshot.taken_at.isoformat(),
+        unexplained=None
+        if summary.unexplained is None
+        else _unexplained_out(summary.unexplained),
+        days_until_full=summary.days_until_full,
+        top_growth=None
+        if summary.top_growth is None
+        else _folder_growth_out(summary.top_growth),
+    )
+
+
+def _plan_item_out(item: PlanItem) -> PlanItemOut:
+    return PlanItemOut(
+        level=item.level,
+        program=item.program,
+        name=item.name,
+        size_bytes=item.size_bytes,
+        reason=item.reason,
+        target=item.target,
     )
 
 
@@ -233,6 +313,29 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             by_category=None
             if growth.categories is None
             else [_category_growth_out(category) for category in growth.categories],
+        )
+
+    @app.get("/summary", response_model=SummaryOut)
+    def get_summary() -> SummaryOut:
+        try:
+            summary = summary_service.run_summary(data_dir)
+        except SummaryError as error:
+            raise _as_http_error(error.kind) from error
+        return SummaryOut(
+            volumes=[_volume_summary_out(volume) for volume in summary.volumes]
+        )
+
+    @app.get("/plan", response_model=PlanOut)
+    def get_plan() -> PlanOut:
+        try:
+            plan = run_plan(data_dir)
+        except PlanError as error:
+            raise _as_http_error(error.kind) from error
+        return PlanOut(
+            safe_bytes=plan.total_bytes("safe"),
+            review_bytes=plan.total_bytes("review"),
+            move_bytes=plan.total_bytes("move"),
+            items=[_plan_item_out(item) for item in plan.items],
         )
 
     return app

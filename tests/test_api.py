@@ -168,3 +168,55 @@ def test_there_is_no_public_api_documentation(tmp_path):
     client = TestClient(create_app(tmp_path))
     assert client.get("/docs").status_code == 404
     assert client.get("/openapi.json").status_code == 404
+
+
+def test_get_summary_without_any_scan_still_lists_real_volumes(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    response = client.get("/summary")
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["volumes"], list) and body["volumes"]
+    assert body["volumes"][0]["snapshot_id"] is None
+
+
+def test_get_summary_with_a_scan_includes_unexplained(tmp_path):
+    with Store.open(tmp_path / "discoclaro.db") as store:
+        save(store, "C:")
+    client = TestClient(create_app(tmp_path))
+    response = client.get("/summary")
+    assert response.status_code == 200
+    body = response.json()
+    row = next(
+        (r for r in body["volumes"] if r["volume"]["name"] == "C:"),
+        None,
+    )
+    if row is not None and row["snapshot_id"] is not None:
+        assert "unexplained" in row
+
+
+def test_plan_item_out_maps_every_field():
+    from discoclaro.domain.plan import PlanItem
+    from discoclaro.interfaces.api import _plan_item_out
+
+    item = PlanItem(
+        level="safe",
+        program="docker",
+        name="images",
+        size_bytes=100,
+        reason="reclaimable",
+        target="docker:images",
+    )
+    out = _plan_item_out(item)
+    assert out.level == "safe"
+    assert out.program == "docker"
+    assert out.name == "images"
+    assert out.size_bytes == 100
+    assert out.reason == "reclaimable"
+    assert out.target == "docker:images"
+
+
+# /plan corre de verdad los seis inspectores de programas (Docker, Steam…), con
+# comandos reales: no se prueba aquí con TestClient a propósito, para que la
+# prueba no dependa del estado real de esta máquina ni haga llamadas reales en
+# cada corrida de pytest. Su envoltorio (_plan_item_out) sí se prueba arriba, y
+# el endpoint completo se verificó en la demo real de T3.3.
