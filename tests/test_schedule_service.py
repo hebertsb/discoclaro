@@ -12,6 +12,8 @@ from discoclaro.platform import windows
 from discoclaro.services import schedule_service
 from discoclaro.services.schedule_service import (
     CHECK_TASK_NAME,
+    PROGRAMS_HOURLY_TASK_NAME,
+    PROGRAMS_ONEVENT_TASK_NAME,
     SCAN_TASK_NAME,
     ScheduleError,
     ScheduleStatus,
@@ -63,14 +65,35 @@ def test_install_resolves_a_folder_target_to_its_full_path():
     assert scan_call[1][-1] == "C:\\Users\\x"
 
 
-def test_install_passes_the_default_schedule_and_time():
+def test_install_passes_the_default_schedule_and_time_to_scan_and_check():
     calls, create = fake_create()
     install("C:", volumes=fake_volumes, create=create)
-    for _, _, kwargs in calls:
-        assert kwargs == {
-            "schedule": schedule_service.DEFAULT_SCHEDULE,
-            "start_time": schedule_service.DEFAULT_START_TIME,
-        }
+    for name, _, kwargs in calls:
+        if name in (SCAN_TASK_NAME, CHECK_TASK_NAME):
+            assert kwargs == {
+                "schedule": schedule_service.DEFAULT_SCHEDULE,
+                "start_time": schedule_service.DEFAULT_START_TIME,
+            }
+
+
+def test_install_creates_the_programs_hourly_task():
+    calls, create = fake_create()
+    install("C:", volumes=fake_volumes, create=create)
+    call = next(call for call in calls if call[0] == PROGRAMS_HOURLY_TASK_NAME)
+    assert call[1][-1] == "programs-check"
+    assert call[2] == {"schedule": "HOURLY"}
+
+
+def test_install_creates_the_programs_onevent_task_for_msi_installs():
+    calls, create = fake_create()
+    install("C:", volumes=fake_volumes, create=create)
+    call = next(call for call in calls if call[0] == PROGRAMS_ONEVENT_TASK_NAME)
+    assert call[1][-1] == "programs-check"
+    assert call[2] == {
+        "schedule": "ONEVENT",
+        "event_channel": schedule_service.MSI_INSTALL_EVENT_CHANNEL,
+        "event_query": schedule_service.MSI_INSTALL_EVENT_QUERY,
+    }
 
 
 def test_install_raises_for_a_target_not_on_a_fixed_disk():
@@ -89,10 +112,15 @@ def test_install_wraps_a_schtasks_failure():
     assert error.value.kind == "schedule_failed"
 
 
-def test_remove_calls_delete_for_both_task_names():
+def test_remove_calls_delete_for_every_task_name():
     calls = []
     remove(delete=lambda name: calls.append(name) or True)
-    assert calls == [SCAN_TASK_NAME, CHECK_TASK_NAME]
+    assert calls == [
+        SCAN_TASK_NAME,
+        CHECK_TASK_NAME,
+        PROGRAMS_HOURLY_TASK_NAME,
+        PROGRAMS_ONEVENT_TASK_NAME,
+    ]
 
 
 def test_remove_returns_true_when_either_task_existed():
@@ -110,20 +138,36 @@ def fake_get_command(registered):
 
 def test_status_with_nothing_installed():
     assert status(python=PYTHON, get_command=fake_get_command({})) == ScheduleStatus(
-        scan=TaskStatus(installed=False), check=TaskStatus(installed=False)
+        scan=TaskStatus(installed=False),
+        check=TaskStatus(installed=False),
+        programs_hourly=TaskStatus(installed=False),
+        programs_onevent=TaskStatus(installed=False),
     )
 
 
 def test_status_reports_each_task_installed_and_matching():
+    programs_check_args = "-m discoclaro programs-check"
     registered = {
         SCAN_TASK_NAME: (PYTHON, "-m discoclaro scan C:"),
         CHECK_TASK_NAME: (PYTHON, "-m discoclaro check"),
+        PROGRAMS_HOURLY_TASK_NAME: (PYTHON, programs_check_args),
+        PROGRAMS_ONEVENT_TASK_NAME: (PYTHON, programs_check_args),
     }
     result = status(python=PYTHON, get_command=fake_get_command(registered))
     assert result == ScheduleStatus(
         scan=TaskStatus(installed=True, altered=False),
         check=TaskStatus(installed=True, altered=False),
+        programs_hourly=TaskStatus(installed=True, altered=False),
+        programs_onevent=TaskStatus(installed=True, altered=False),
     )
+
+
+def test_status_programs_check_is_altered_with_extra_arguments():
+    registered = {
+        PROGRAMS_HOURLY_TASK_NAME: (PYTHON, "-m discoclaro programs-check --extra")
+    }
+    result = status(python=PYTHON, get_command=fake_get_command(registered))
+    assert result.programs_hourly == TaskStatus(installed=True, altered=True)
 
 
 def test_status_reports_only_one_task_installed():

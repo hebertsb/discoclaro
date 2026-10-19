@@ -555,6 +555,55 @@ def test_create_scheduled_task_quotes_a_path_with_spaces():
     )
 
 
+def test_create_scheduled_task_without_a_start_time_omits_st():
+    calls, run = fake_run()
+    windows.create_scheduled_task(
+        "\\discoclaro\\programs-onlogon",
+        ["python.exe", "-m", "discoclaro", "programs-check"],
+        schedule="ONLOGON",
+        run=run,
+    )
+    (args, _) = calls[0]
+    assert "/st" not in args
+    assert args[1:] == [
+        "/create",
+        "/tn",
+        "\\discoclaro\\programs-onlogon",
+        "/tr",
+        "python.exe -m discoclaro programs-check",
+        "/sc",
+        "ONLOGON",
+        "/f",
+    ]
+
+
+def test_create_scheduled_task_with_an_event_query_uses_ec_and_mo():
+    calls, run = fake_run()
+    windows.create_scheduled_task(
+        "\\discoclaro\\programs-onevent",
+        ["python.exe", "-m", "discoclaro", "programs-check"],
+        schedule="ONEVENT",
+        event_channel="Application",
+        event_query="*[System[Provider[@Name='MsiInstaller']]]",
+        run=run,
+    )
+    (args, _) = calls[0]
+    assert args[1:] == [
+        "/create",
+        "/tn",
+        "\\discoclaro\\programs-onevent",
+        "/tr",
+        "python.exe -m discoclaro programs-check",
+        "/sc",
+        "ONEVENT",
+        "/ec",
+        "Application",
+        "/mo",
+        "*[System[Provider[@Name='MsiInstaller']]]",
+        "/f",
+    ]
+
+
 def test_create_scheduled_task_raises_when_schtasks_fails():
     _, run = fake_run(returncode=1, stderr="ERROR: access denied")
     with pytest.raises(windows.ScheduledTaskError):

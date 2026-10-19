@@ -11,6 +11,7 @@ growth = "Compara dos fotos y muestra qué creció."
 check = "Evalúa los avisos configurados y notifica los que correspondan."
 schedule = "Instala, quita o consulta la tarea programada que escanea y revisa avisos."
 leftovers = "Busca restos de un programa ya desinstalado, solo por nombre."
+programs-check = "Revisa el inventario de programas instalados y avisa qué cambió."
 
 [cli.scan]
 target_name = "DESTINO"
@@ -47,6 +48,9 @@ target_help = "Disco (por ejemplo C:) o carpeta que la tarea escaneará cada dí
 [cli.leftovers]
 name_name = "NOMBRE"
 name_help = "Nombre del programa ya desinstalado a buscar (tal como aparecía)."
+json_help = "Muestra el resultado en JSON en vez de en una tabla."
+
+[cli.programs_check]
 json_help = "Muestra el resultado en JSON en vez de en una tabla."
 
 [format]
@@ -101,7 +105,7 @@ shown = "Se avisó de {shown} cosas."
 none_found = "Nada que avisar."
 
 [schedule]
-installed = "Tareas programadas: {target} se escaneará y se revisarán los avisos, todos los días a las {time}."
+installed = "Tareas programadas: {target} se escaneará y se revisarán los avisos, todos los días a las {time}; el inventario de programas se revisará cada hora y al instalarse un programa por MSI."
 removed = "Se quitaron las tareas programadas."
 not_installed = "No había tareas programadas para quitar."
 status_scan_installed = "Escaneo programado: instalado."
@@ -110,6 +114,12 @@ status_scan_altered = "Escaneo programado: instalado, pero su acción no es la e
 status_check_installed = "Chequeo programado: instalado."
 status_check_not_installed = "Chequeo programado: no instalado."
 status_check_altered = "Chequeo programado: instalado, pero su acción no es la esperada. Puede haberse alterado a mano; volvé a instalarlo con «discoclaro schedule install <destino>»."
+status_programs_hourly_installed = "Revisión de programas cada hora: instalada."
+status_programs_hourly_not_installed = "Revisión de programas cada hora: no instalada."
+status_programs_hourly_altered = "Revisión de programas cada hora: instalada, pero su acción no es la esperada. Puede haberse alterado a mano; volvé a instalarlo con «discoclaro schedule install <destino>»."
+status_programs_onevent_installed = "Revisión de programas al instalar un MSI: instalada."
+status_programs_onevent_not_installed = "Revisión de programas al instalar un MSI: no instalada."
+status_programs_onevent_altered = "Revisión de programas al instalar un MSI: instalada, pero su acción no es la esperada. Puede haberse alterado a mano; volvé a instalarlo con «discoclaro schedule install <destino>»."
 
 [alerts]
 title_volume_low_free = "Poco espacio libre"
@@ -151,6 +161,13 @@ column_size = "Tamaño"
 column_confidence = "Confianza"
 column_reason = "Motivo"
 shown = "Se encontraron {shown} carpetas."
+
+[programs_check]
+none_found = "Sin cambios en el inventario de programas."
+column_title = "Aviso"
+column_program = "Programa"
+column_detail = "Detalle"
+shown = "Se avisó de {shown} cambios."
 
 [admin]
 announce = "Se pedirá permiso de administrador para escanear {target} en modo solo lectura. Windows mostrará su propia ventana de permisos."

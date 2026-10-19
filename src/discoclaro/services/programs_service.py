@@ -24,7 +24,7 @@ exista.
 import os
 import sqlite3
 import stat
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -63,6 +63,16 @@ class ProgramsCheckError(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class InstalledProgram:
+    """Un programa recién instalado (T2B.5) y la huella que se le midió (ruta,
+    tamaño, fecha, confianza y motivo de cada carpeta), vacía si no se encontró
+    ninguna carpeta suya."""
+
+    program: Program
+    footprints: tuple[Footprint, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class UninstallLeftovers:
     """Lo que sigue existiendo de un programa recién desinstalado (T2B.7): el
     programa y la lista completa de restos (ruta, tamaño, fecha, confianza y
@@ -74,10 +84,11 @@ class UninstallLeftovers:
 
 @dataclass(frozen=True, slots=True)
 class ProgramsCheckResult:
-    """Lo que cambió en una revisión del inventario: programas recién instalados
-    y, de cada uno recién desinstalado, lo que le quedó."""
+    """Lo que cambió en una revisión del inventario: de cada programa recién
+    instalado, su huella medida; de cada uno recién desinstalado, lo que le
+    quedó."""
 
-    installed: tuple[Program, ...]
+    installed: tuple[InstalledProgram, ...]
     uninstalled: tuple[UninstallLeftovers, ...]
 
 
@@ -168,9 +179,13 @@ def inspect_folder(path: str) -> FolderCandidate | None:
     )
 
 
-def _format_install_notice(
-    program: Program, footprints: list[Footprint]
+def format_install_notice(
+    program: Program, footprints: Sequence[Footprint]
 ) -> tuple[str, str]:
+    """El título y el mensaje ya traducidos del aviso de instalación (T2B.5).
+
+    Lo usa `check_programs` para notificar, y la CLI para mostrar lo mismo en
+    su tabla (T2B.8), sin armar el texto dos veces."""
     title = t("programs.installed_title")
     name = _display(program.name)
     if not footprints:
@@ -198,9 +213,13 @@ def _format_install_notice(
     )
 
 
-def _format_uninstall_notice(
-    program: Program, footprints: tuple[Footprint, ...]
+def format_uninstall_notice(
+    program: Program, footprints: Sequence[Footprint]
 ) -> tuple[str, str]:
+    """El título y el mensaje ya traducidos del aviso de desinstalación (T2B.7).
+
+    Lo usa `check_programs` para notificar, y la CLI para mostrar lo mismo en
+    su tabla (T2B.8), sin armar el texto dos veces."""
     title = t("programs.uninstalled_title")
     name = _display(program.name)
     if not footprints:
@@ -266,25 +285,27 @@ def check_programs(
             return ProgramsCheckResult(installed=(), uninstalled=())
         diff = diff_inventories(before, after)
         env = environment()
+        installed = []
         for program in diff.installed:
             candidates = [
                 candidate
                 for path in _candidate_paths(program, env)
                 if (candidate := inspect(path)) is not None
             ]
-            footprints = footprints_of(program, candidates)
+            footprints = tuple(footprints_of(program, candidates))
             if footprints:
                 store.save_footprints(program.name, footprints, moment)
-            notify(*_format_install_notice(program, footprints))
+            notify(*format_install_notice(program, footprints))
+            installed.append(InstalledProgram(program=program, footprints=footprints))
         uninstalled = []
         for program in diff.uninstalled:
             leftovers = _uninstall_leftovers(
                 store, program, environment=env, inspect=inspect, moment=moment
             )
-            notify(*_format_uninstall_notice(program, leftovers.footprints))
+            notify(*format_uninstall_notice(program, leftovers.footprints))
             uninstalled.append(leftovers)
         return ProgramsCheckResult(
-            installed=diff.installed, uninstalled=tuple(uninstalled)
+            installed=tuple(installed), uninstalled=tuple(uninstalled)
         )
 
 

@@ -17,7 +17,14 @@ from discoclaro.domain.categories import CategoryTotal
 from discoclaro.domain.footprint import Footprint
 from discoclaro.domain.formatting import format_table
 from discoclaro.domain.growth import CategoryGrowth, FolderGrowth
-from discoclaro.domain.models import LargeFile, Node, ScanProgress, Snapshot, SystemFile
+from discoclaro.domain.models import (
+    LargeFile,
+    Node,
+    Program,
+    ScanProgress,
+    Snapshot,
+    SystemFile,
+)
 from discoclaro.domain.unexplained import compute_unexplained
 from discoclaro.i18n import t
 from discoclaro.interfaces import cli
@@ -25,7 +32,12 @@ from discoclaro.interfaces.cli import COMMANDS, main
 from discoclaro.services import growth_service, report_service
 from discoclaro.services.check_service import CheckError
 from discoclaro.services.growth_service import Growth, GrowthError
-from discoclaro.services.programs_service import ProgramsCheckError
+from discoclaro.services.programs_service import (
+    InstalledProgram,
+    ProgramsCheckError,
+    ProgramsCheckResult,
+    UninstallLeftovers,
+)
 from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
 from discoclaro.services.schedule_service import (
@@ -1232,11 +1244,21 @@ def fake_schedule_remove(monkeypatch, removed=False):
     return calls
 
 
-def fake_schedule_status(monkeypatch, scan=None, check=None):
+def fake_schedule_status(
+    monkeypatch,
+    scan=None,
+    check=None,
+    programs_hourly=None,
+    programs_onevent=None,
+):
     scan = scan or TaskStatus(installed=False)
     check = check or TaskStatus(installed=False)
+    programs_hourly = programs_hourly or TaskStatus(installed=False)
+    programs_onevent = programs_onevent or TaskStatus(installed=False)
     monkeypatch.setattr(
-        cli.schedule_service, "status", lambda: ScheduleStatus(scan, check)
+        cli.schedule_service,
+        "status",
+        lambda: ScheduleStatus(scan, check, programs_hourly, programs_onevent),
     )
 
 
@@ -1266,7 +1288,8 @@ def test_schedule_install_prints_a_confirmation_in_spanish(monkeypatch, capsys):
     assert main(["schedule", "install", "C:"]) == 0
     assert capsys.readouterr().out == (
         "Tareas programadas: C: se escaneará y se revisarán los avisos, todos los "
-        "días a las 09:00.\n"
+        "días a las 09:00; el inventario de programas se revisará cada hora y al "
+        "instalarse un programa por MSI.\n"
     )
 
 
@@ -1302,19 +1325,28 @@ def test_schedule_status_prints_both_tasks_not_installed(monkeypatch, capsys):
     fake_schedule_status(monkeypatch)
     assert main(["schedule", "status"]) == 0
     assert capsys.readouterr().out == (
-        "Escaneo programado: no instalado.\nChequeo programado: no instalado.\n"
+        "Escaneo programado: no instalado.\n"
+        "Chequeo programado: no instalado.\n"
+        "Revisión de programas cada hora: no instalada.\n"
+        "Revisión de programas al instalar un MSI: no instalada.\n"
     )
 
 
-def test_schedule_status_prints_both_tasks_installed(monkeypatch, capsys):
+def test_schedule_status_prints_all_tasks_installed(monkeypatch, capsys):
+    installed = TaskStatus(installed=True, altered=False)
     fake_schedule_status(
         monkeypatch,
-        scan=TaskStatus(installed=True, altered=False),
-        check=TaskStatus(installed=True, altered=False),
+        scan=installed,
+        check=installed,
+        programs_hourly=installed,
+        programs_onevent=installed,
     )
     assert main(["schedule", "status"]) == 0
     assert capsys.readouterr().out == (
-        "Escaneo programado: instalado.\nChequeo programado: instalado.\n"
+        "Escaneo programado: instalado.\n"
+        "Chequeo programado: instalado.\n"
+        "Revisión de programas cada hora: instalada.\n"
+        "Revisión de programas al instalar un MSI: instalada.\n"
     )
 
 
@@ -1331,6 +1363,16 @@ def test_schedule_status_prints_altered_when_the_action_does_not_match(
     assert "no es la esperada" in lines[0]
     assert "Puede haberse alterado a mano" in lines[0]
     assert lines[1] == "Chequeo programado: instalado."
+
+
+def test_schedule_status_prints_programs_onevent_altered(monkeypatch, capsys):
+    fake_schedule_status(
+        monkeypatch, programs_onevent=TaskStatus(installed=True, altered=True)
+    )
+    assert main(["schedule", "status"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert "al instalar un MSI" in lines[3]
+    assert "no es la esperada" in lines[3]
 
 
 def fake_find_leftovers(monkeypatch, footprints=None, error=None):
@@ -1419,6 +1461,115 @@ def test_leftovers_with_an_empty_name_is_reported(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == "Hace falta un nombre para buscar restos.\n"
+
+
+def make_program(**changes):
+    fields = {
+        "name": "Acme App",
+        "version": "1.0",
+        "publisher": "Acme",
+        "install_location": "C:\\Program Files\\Acme",
+        "install_date": "20261018",
+        "estimated_size_bytes": None,
+        "uninstall_string": None,
+    }
+    return Program(**{**fields, **changes})
+
+
+def fake_check_programs(monkeypatch, result=None, error=None):
+    calls = []
+
+    def check_programs():
+        calls.append(())
+        if error:
+            raise error
+        return result if result is not None else ProgramsCheckResult((), ())
+
+    monkeypatch.setattr(cli.programs_service, "check_programs", check_programs)
+    return calls
+
+
+def test_programs_check_help_mentions_the_json_option(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["programs-check", "--help"])
+    assert exc.value.code == 0
+    shown = " ".join(capsys.readouterr().out.split())
+    assert "--json" in shown
+
+
+def test_programs_check_calls_the_service_with_no_arguments(monkeypatch, capsys):
+    calls = fake_check_programs(monkeypatch)
+    assert main(["programs-check"]) == 0
+    assert calls == [()]
+    capsys.readouterr()
+
+
+def test_programs_check_with_no_changes_says_so(monkeypatch, capsys):
+    fake_check_programs(monkeypatch)
+    assert main(["programs-check"]) == 0
+    assert capsys.readouterr().out == "Sin cambios en el inventario de programas.\n"
+
+
+def test_programs_check_prints_a_table_of_installed_and_uninstalled(
+    monkeypatch, capsys
+):
+    installed = InstalledProgram(
+        program=make_program(name="Acme App"),
+        footprints=(
+            Footprint(
+                path="C:\\Program Files\\Acme",
+                size_bytes=2048,
+                last_modified=None,
+                confidence="high",
+                reason="install_location",
+            ),
+        ),
+    )
+    uninstalled = UninstallLeftovers(
+        program=make_program(name="Gone App"), footprints=()
+    )
+    fake_check_programs(monkeypatch, ProgramsCheckResult((installed,), (uninstalled,)))
+    assert main(["programs-check"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    table = format_table(
+        ["Aviso", "Programa", "Detalle"],
+        [
+            [
+                "Programa instalado",
+                "Acme App",
+                "Se instaló Acme App en C:\\Program Files\\Acme (2,0 KiB).",
+            ],
+            [
+                "Programa desinstalado",
+                "Gone App",
+                "Se desinstaló Gone App y no quedó ningún resto de tamaño apreciable.",
+            ],
+        ],
+        align=("l", "l", "l"),
+    )
+    assert lines[: len(table)] == table
+    assert lines[len(table)] == "Se avisó de 2 cambios."
+
+
+def test_programs_check_json_has_the_expected_fields(monkeypatch, capsys):
+    installed = InstalledProgram(program=make_program(name="Acme App"), footprints=())
+    fake_check_programs(monkeypatch, ProgramsCheckResult((installed,), ()))
+    assert main(["programs-check", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data == {
+        "installed": [{"name": "Acme App", "footprints": []}],
+        "uninstalled": [],
+    }
+
+
+def test_programs_check_cannot_open_database_is_reported(monkeypatch, capsys):
+    fake_check_programs(
+        monkeypatch, error=ProgramsCheckError("cannot_open_database", "x")
+    )
+    assert main(["programs-check"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "No se pudo abrir la base de datos de discoclaro" in captured.err
 
 
 def test_output_never_crashes_on_characters_the_console_cannot_write(monkeypatch):

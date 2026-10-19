@@ -98,7 +98,7 @@ def test_a_newly_installed_program_is_detected_and_notified(tmp_path):
         inspect=fake_inspect({"C:\\Program Files\\Acme": 2048}),
         notify=notify,
     )
-    assert [p.name for p in result.installed] == ["Acme App"]
+    assert [i.program.name for i in result.installed] == ["Acme App"]
     assert result.uninstalled == ()
     assert calls == [
         (

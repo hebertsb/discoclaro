@@ -37,12 +37,20 @@ from discoclaro.services import (
 )
 from discoclaro.services.check_service import CheckError
 from discoclaro.services.growth_service import Growth, GrowthError
-from discoclaro.services.programs_service import ProgramsCheckError
+from discoclaro.services.programs_service import ProgramsCheckError, ProgramsCheckResult
 from discoclaro.services.report_service import Report, ReportError
 from discoclaro.services.scan_service import ScanError, ScanSummary
 from discoclaro.services.schedule_service import ScheduleError, TaskStatus
 
-COMMANDS = ("scan", "report", "growth", "check", "schedule", "leftovers")
+COMMANDS = (
+    "scan",
+    "report",
+    "growth",
+    "check",
+    "schedule",
+    "leftovers",
+    "programs-check",
+)
 EXIT_CANCELLED = 130
 PROGRESS_INTERVAL_S = 0.15
 
@@ -151,6 +159,10 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument(
                 "--json", action="store_true", help=t("cli.leftovers.json_help")
             )
+        elif name == "programs-check":
+            subparser.add_argument(
+                "--json", action="store_true", help=t("cli.programs_check.json_help")
+            )
     return parser
 
 
@@ -170,6 +182,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _schedule(args.schedule_action, getattr(args, "target", None))
     if args.command == "leftovers":
         return _leftovers(args.name, args.json)
+    if args.command == "programs-check":
+        return _programs_check(args.json)
     return 0
 
 
@@ -344,6 +358,18 @@ def _schedule(action: str, target: str | None) -> int:
             result = schedule_service.status()
             print(t(f"schedule.status_scan_{_status_suffix(result.scan)}"))
             print(t(f"schedule.status_check_{_status_suffix(result.check)}"))
+            print(
+                t(
+                    f"schedule.status_programs_hourly_"
+                    f"{_status_suffix(result.programs_hourly)}"
+                )
+            )
+            print(
+                t(
+                    f"schedule.status_programs_onevent_"
+                    f"{_status_suffix(result.programs_onevent)}"
+                )
+            )
     except ScheduleError as error:
         message = t(f"errors.{error.kind}", target=safe_text(error.target))
         print(message, file=sys.stderr)
@@ -411,6 +437,69 @@ def _footprint_to_json(footprint: Footprint) -> dict[str, object]:
         else footprint.last_modified.isoformat(),
         "confidence": footprint.confidence,
         "reason": footprint.reason,
+    }
+
+
+def _programs_check(as_json: bool) -> int:
+    """Revisa el inventario de programas (T2B.8) y muestra qué se avisó."""
+    try:
+        result = programs_service.check_programs()
+    except ProgramsCheckError as error:
+        message = t(f"errors.{error.kind}", target=safe_text(error.target))
+        print(message, file=sys.stderr)
+        return 1
+    if as_json:
+        print(json.dumps(_programs_check_to_json(result), ensure_ascii=False, indent=2))
+    else:
+        for line in _programs_check_lines(result):
+            print(line)
+    return 0
+
+
+def _programs_check_lines(result: ProgramsCheckResult) -> list[str]:
+    if not result.installed and not result.uninstalled:
+        return [t("programs_check.none_found")]
+    headers = [
+        t("programs_check.column_title"),
+        t("programs_check.column_program"),
+        t("programs_check.column_detail"),
+    ]
+    rows = []
+    for installed in result.installed:
+        title, message = programs_service.format_install_notice(
+            installed.program, installed.footprints
+        )
+        rows.append(
+            [safe_text(title), safe_text(installed.program.name), safe_text(message)]
+        )
+    for leftovers in result.uninstalled:
+        title, message = programs_service.format_uninstall_notice(
+            leftovers.program, leftovers.footprints
+        )
+        rows.append(
+            [safe_text(title), safe_text(leftovers.program.name), safe_text(message)]
+        )
+    lines = format_table(headers, rows, align=("l", "l", "l"))
+    lines.append(t("programs_check.shown", shown=_number(len(rows))))
+    return lines
+
+
+def _programs_check_to_json(result: ProgramsCheckResult) -> dict[str, object]:
+    return {
+        "installed": [
+            {
+                "name": installed.program.name,
+                "footprints": [_footprint_to_json(f) for f in installed.footprints],
+            }
+            for installed in result.installed
+        ],
+        "uninstalled": [
+            {
+                "name": leftovers.program.name,
+                "footprints": [_footprint_to_json(f) for f in leftovers.footprints],
+            }
+            for leftovers in result.uninstalled
+        ],
     }
 
 

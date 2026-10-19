@@ -1,13 +1,25 @@
-"""Caso de uso "programar" (T2.8, T2.13): instala, quita y consulta la tarea de
-Windows.
+"""Caso de uso "programar" (T2.8, T2.13, T2B.8): instala, quita y consulta las
+tareas de Windows.
 
-Crea dos tareas en el Programador de tareas, ambas sin elevar y con la ruta absoluta
-del intérprete que ya está corriendo: una que escanea el destino elegido y otra que
-revisa los avisos, para que el disco se vigile solo, sin dejar un proceso residente
-(la periodicidad la da Windows, no discoclaro). `status()` también compara lo que de
-verdad tiene registrado cada tarea contra lo esperado, para avisar si alguien la
-alteró a mano (T2.13): otro ejecutable, u otros argumentos que no sean exactamente
-"-m discoclaro scan <algo>" o "-m discoclaro check".
+Crea cuatro tareas en el Programador de tareas, todas sin elevar y con la ruta
+absoluta del intérprete que ya está corriendo, para que el disco (y el inventario
+de programas) se vigile solo, sin dejar un proceso residente (la periodicidad la
+da Windows, no discoclaro): escanea el destino elegido, revisa los avisos, y
+revisa el inventario de programas cada hora y al terminar de instalarse un
+programa por MSI (T2B.8). `status()` también compara lo que de verdad tiene
+registrado cada tarea contra lo esperado, para avisar si alguien la alteró a mano
+(T2.13): otro ejecutable, u otros argumentos que no sean exactamente los que arma
+`install()`.
+
+**Sin disparador "al iniciar sesión", a propósito:** el plan lo pedía además de
+"cada hora", pero crear una tarea con disparador `ONLOGON` (probado real,
+2026-10-18) da "Acceso denegado" en esta cuenta sin estar elevada —aunque sea
+administradora, UAC le da un token "solo para denegar" al correr sin elevar—,
+mientras que `HOURLY` y `ONEVENT` sí se crean sin pedir nada. Pedir elevación
+solo para esto rompería la regla de seguridad del proyecto (estas tareas corren
+sin elevar); `HOURLY` ya cubre el caso con, como mucho, 1 hora de atraso —
+incluida la primera revisión después de iniciar sesión—, así que se decidió no
+agregarlo. Ver la nota completa de T2B.8 en el plan.
 """
 
 import re
@@ -22,9 +34,23 @@ from discoclaro.services.scan_service import ScanError, locate, normalize_target
 
 SCAN_TASK_NAME = "\\discoclaro\\scan"
 CHECK_TASK_NAME = "\\discoclaro\\check"
+PROGRAMS_HOURLY_TASK_NAME = "\\discoclaro\\programs-hourly"
+PROGRAMS_ONEVENT_TASK_NAME = "\\discoclaro\\programs-onevent"
 DEFAULT_SCHEDULE = "DAILY"
 DEFAULT_START_TIME = "09:00"
+
+# El canal y la condición (XPath) del disparador por evento de instalador (T2B.8):
+# el ID 1033 de "MsiInstaller" es el que deja Windows Installer al terminar de
+# instalar un producto (confirmado con el registro de eventos real de esta
+# máquina: Java, PostgreSQL, Blender). Solo cubre instaladores MSI; la mayoría de
+# los programas reales de esta máquina (Docker Desktop, Ollama, VS Code, DBeaver…)
+# no son MSI y no generan ningún evento parecido, así que el disparador de cada
+# hora sigue siendo el que de verdad los detecta a todos.
+MSI_INSTALL_EVENT_CHANNEL = "Application"
+MSI_INSTALL_EVENT_QUERY = "*[System[Provider[@Name='MsiInstaller'] and (EventID=1033)]]"
+
 _MODULE_PREFIX = ("-m", "discoclaro")
+_FIXED_ARGUMENT_ACTIONS = ("check", "programs-check")
 
 
 class ScheduleError(Exception):
@@ -50,10 +76,12 @@ class TaskStatus:
 
 @dataclass(frozen=True, slots=True)
 class ScheduleStatus:
-    """El estado de las dos tareas (escanear y revisar), cada una por separado."""
+    """El estado de las cuatro tareas, cada una por separado."""
 
     scan: TaskStatus
     check: TaskStatus
+    programs_hourly: TaskStatus
+    programs_onevent: TaskStatus
 
 
 def _resolved_name(target: str, volumes: Callable[[], list[Volume]]) -> str:
@@ -72,12 +100,15 @@ def install(
     python: str = sys.executable,
     create: Callable[..., None] = windows.create_scheduled_task,
 ) -> None:
-    """Crea (o reemplaza) las dos tareas: escanear `target` y, después, revisar.
+    """Crea (o reemplaza) las cuatro tareas: escanear `target`, revisar los
+    avisos, y revisar el inventario de programas cada hora y al terminar de
+    instalarse un programa por MSI (T2B.8).
 
     `target` tiene que ser un disco fijo o una carpeta de uno (igual que en `scan`).
-    Las dos corren como el usuario normal, sin pedir administrador.
+    Las cuatro corren como el usuario normal, sin pedir administrador.
     """
     name = _resolved_name(target, volumes)
+    programs_check = [python, "-m", "discoclaro", "programs-check"]
     try:
         create(
             SCAN_TASK_NAME,
@@ -91,19 +122,27 @@ def install(
             schedule=DEFAULT_SCHEDULE,
             start_time=DEFAULT_START_TIME,
         )
+        create(PROGRAMS_HOURLY_TASK_NAME, programs_check, schedule="HOURLY")
+        create(
+            PROGRAMS_ONEVENT_TASK_NAME,
+            programs_check,
+            schedule="ONEVENT",
+            event_channel=MSI_INSTALL_EVENT_CHANNEL,
+            event_query=MSI_INSTALL_EVENT_QUERY,
+        )
     except windows.ScheduledTaskError as error:
         raise ScheduleError("schedule_failed", str(error)) from error
 
 
 def remove(*, delete: Callable[[str], bool] = windows.remove_scheduled_task) -> bool:
-    """Quita las dos tareas. Devuelve si alguna de las dos existía."""
-    removed_scan = delete(SCAN_TASK_NAME)
-    removed_check = delete(CHECK_TASK_NAME)
-    return removed_scan or removed_check
-
-
-def _expected_check_arguments() -> str:
-    return windows.command_line([*_MODULE_PREFIX, "check"])
+    """Quita las cuatro tareas. Devuelve si alguna de las cuatro existía."""
+    removed = [
+        delete(SCAN_TASK_NAME),
+        delete(CHECK_TASK_NAME),
+        delete(PROGRAMS_HOURLY_TASK_NAME),
+        delete(PROGRAMS_ONEVENT_TASK_NAME),
+    ]
+    return any(removed)
 
 
 def _scan_arguments_pattern() -> re.Pattern[str]:
@@ -123,8 +162,8 @@ def _task_status(
     command, arguments = found
     if command != python:
         return TaskStatus(installed=True, altered=True)
-    if action == "check":
-        matches = arguments == _expected_check_arguments()
+    if action in _FIXED_ARGUMENT_ACTIONS:
+        matches = arguments == windows.command_line([*_MODULE_PREFIX, action])
     else:
         matches = bool(_scan_arguments_pattern().fullmatch(arguments))
     return TaskStatus(installed=True, altered=not matches)
@@ -137,15 +176,24 @@ def status(
         [str], tuple[str, str] | None
     ] = windows.scheduled_task_command,
 ) -> ScheduleStatus:
-    """El estado de las dos tareas: instaladas o no, y si coinciden con lo esperado.
+    """El estado de las cuatro tareas: instaladas o no, y si coinciden con lo
+    esperado.
 
     Lo esperado es el mismo ejecutable que se usaría para instalar ahora
     (`python`) y los mismos argumentos que armaría `install()`; no compara el
     destino exacto del escaneo (no hay otra fuente de verdad para saberlo), pero sí
     rechaza cualquier otra cosa: otro ejecutable, argumentos de otro módulo, o algo
-    de más después del destino.
+    de más después del destino. No compara el disparador (cada hora, por evento):
+    solo lee la acción registrada, igual que antes de esta tarea (T2.13 no lo
+    necesitaba).
     """
     return ScheduleStatus(
         scan=_task_status(SCAN_TASK_NAME, "scan", python, get_command),
         check=_task_status(CHECK_TASK_NAME, "check", python, get_command),
+        programs_hourly=_task_status(
+            PROGRAMS_HOURLY_TASK_NAME, "programs-check", python, get_command
+        ),
+        programs_onevent=_task_status(
+            PROGRAMS_ONEVENT_TASK_NAME, "programs-check", python, get_command
+        ),
     )

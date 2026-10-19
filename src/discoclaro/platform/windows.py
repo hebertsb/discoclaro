@@ -306,35 +306,41 @@ def create_scheduled_task(
     command: Sequence[str],
     *,
     schedule: str,
-    start_time: str,
+    start_time: str | None = None,
+    event_channel: str | None = None,
+    event_query: str | None = None,
     run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> None:
     """Crea (o reemplaza) la tarea `name`, que corre `command` sin elevar.
 
     `command` es el ejecutable y sus argumentos, nunca un texto para una terminal:
     se le pasa a `schtasks.exe` ya armado con las mismas reglas de citado que vería
-    Windows (`command_line`), sin pasar por ninguna terminal. Lanza
-    `ScheduledTaskError` si `schtasks.exe` no pudo crearla. `run` se puede inyectar
-    para probar sin tocar el Programador de tareas real.
+    Windows (`command_line`), sin pasar por ninguna terminal. `start_time` no hace
+    falta para `ONLOGON` ni `HOURLY` (T2B.8): `schtasks` usa la hora actual, que no
+    importa para esos dos. `event_channel`/`event_query` son para `ONEVENT`
+    (T2B.8): el canal (`/EC`, por ejemplo `"Application"`) y la condición en XPath
+    (`/MO`) que dispara la tarea. Lanza `ScheduledTaskError` si `schtasks.exe` no
+    pudo crearla. `run` se puede inyectar para probar sin tocar el Programador de
+    tareas real.
     """
-    result = run(
-        [
-            str(_schtasks_path()),
-            "/create",
-            "/tn",
-            name,
-            "/tr",
-            command_line(command),
-            "/sc",
-            schedule,
-            "/st",
-            start_time,
-            "/f",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=SCHEDULED_TASK_TIMEOUT_S,
-    )
+    args = [
+        str(_schtasks_path()),
+        "/create",
+        "/tn",
+        name,
+        "/tr",
+        command_line(command),
+        "/sc",
+        schedule,
+    ]
+    if start_time is not None:
+        args += ["/st", start_time]
+    if event_channel is not None:
+        args += ["/ec", event_channel]
+    if event_query is not None:
+        args += ["/mo", event_query]
+    args.append("/f")
+    result = run(args, capture_output=True, text=True, timeout=SCHEDULED_TASK_TIMEOUT_S)
     if result.returncode != 0:
         raise ScheduledTaskError(result.returncode, result.stderr.strip())
 

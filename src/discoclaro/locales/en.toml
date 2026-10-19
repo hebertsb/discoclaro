@@ -11,6 +11,7 @@ growth = "Compares two snapshots and shows what grew."
 check = "Evaluates the configured alerts and notifies the ones that apply."
 schedule = "Installs, removes or checks the scheduled task that scans and checks alerts."
 leftovers = "Looks for leftovers of an already uninstalled program, by name only."
+programs-check = "Checks the installed programs inventory and notifies what changed."
 
 [cli.scan]
 target_name = "TARGET"
@@ -47,6 +48,9 @@ target_help = "Disk (for example C:) or folder the task will scan every day."
 [cli.leftovers]
 name_name = "NAME"
 name_help = "Name of the already uninstalled program to search for (as it used to appear)."
+json_help = "Show the result as JSON instead of a table."
+
+[cli.programs_check]
 json_help = "Show the result as JSON instead of a table."
 
 [format]
@@ -101,7 +105,7 @@ shown = "Notified about {shown} things."
 none_found = "Nothing to notify."
 
 [schedule]
-installed = "Scheduled tasks: {target} will be scanned and alerts checked, every day at {time}."
+installed = "Scheduled tasks: {target} will be scanned and alerts checked, every day at {time}; the programs inventory will be checked every hour and when a program is installed through an MSI."
 removed = "The scheduled tasks were removed."
 not_installed = "There were no scheduled tasks to remove."
 status_scan_installed = "Scheduled scan: installed."
@@ -110,6 +114,12 @@ status_scan_altered = "Scheduled scan: installed, but its action is not what was
 status_check_installed = "Scheduled check: installed."
 status_check_not_installed = "Scheduled check: not installed."
 status_check_altered = "Scheduled check: installed, but its action is not what was expected. It may have been altered by hand; reinstall it with \"discoclaro schedule install <target>\"."
+status_programs_hourly_installed = "Programs check every hour: installed."
+status_programs_hourly_not_installed = "Programs check every hour: not installed."
+status_programs_hourly_altered = "Programs check every hour: installed, but its action is not what was expected. It may have been altered by hand; reinstall it with \"discoclaro schedule install <target>\"."
+status_programs_onevent_installed = "Programs check on MSI install: installed."
+status_programs_onevent_not_installed = "Programs check on MSI install: not installed."
+status_programs_onevent_altered = "Programs check on MSI install: installed, but its action is not what was expected. It may have been altered by hand; reinstall it with \"discoclaro schedule install <target>\"."
 
 [alerts]
 title_volume_low_free = "Low free space"
@@ -151,6 +161,13 @@ column_size = "Size"
 column_confidence = "Confidence"
 column_reason = "Reason"
 shown = "Found {shown} folders."
+
+[programs_check]
+none_found = "No changes in the programs inventory."
+column_title = "Alert"
+column_program = "Program"
+column_detail = "Detail"
+shown = "Notified about {shown} changes."
 
 [admin]
 announce = "Administrator permission will be requested to scan {target} in read-only mode. Windows will show its own permission window."
