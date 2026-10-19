@@ -533,3 +533,19 @@ def installed_programs(
         if program is not None:
             programs.append(program)
     return programs
+
+
+def steam_install_path(
+    *,
+    read_values: Callable[
+        [int, str], dict[str, object] | None
+    ] = _registry_subkey_values,
+) -> str | None:
+    """Dónde está instalado Steam (T2C.1), de su propia clave del registro
+    (`HKCU\\Software\\Valve\\Steam\\SteamPath`), o `None` si no está instalado.
+    De solo lectura. `read_values` se puede inyectar para probar."""
+    values = read_values(winreg.HKEY_CURRENT_USER, "Software\\Valve\\Steam")
+    if values is None:
+        return None
+    path = values.get("SteamPath")
+    return path if isinstance(path, str) and path else None

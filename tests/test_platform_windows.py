@@ -800,3 +800,41 @@ def test_installed_programs_processes_several_entries_in_order():
 def test_installed_programs_defaults_to_the_real_registry_without_reading_it():
     parameters = inspect.signature(windows.installed_programs).parameters
     assert parameters["read_entries"].default is windows._read_all_uninstall_entries
+
+
+def test_steam_install_path_reads_the_real_registry_shape():
+    def read_values(hive, path):
+        assert hive == windows.winreg.HKEY_CURRENT_USER
+        assert path == "Software\\Valve\\Steam"
+        return {"SteamPath": "c:/program files (x86)/steam", "SteamExe": "x"}
+
+    assert windows.steam_install_path(read_values=read_values) == (
+        "c:/program files (x86)/steam"
+    )
+
+
+def test_steam_install_path_is_none_when_steam_is_not_installed():
+    assert windows.steam_install_path(read_values=lambda hive, path: None) is None
+
+
+def test_steam_install_path_is_none_when_the_value_is_missing():
+    assert windows.steam_install_path(read_values=lambda hive, path: {}) is None
+
+
+def test_steam_install_path_is_none_when_the_value_is_an_empty_string():
+    assert (
+        windows.steam_install_path(read_values=lambda hive, path: {"SteamPath": ""})
+        is None
+    )
+
+
+def test_steam_install_path_is_none_when_the_value_has_the_wrong_type():
+    assert (
+        windows.steam_install_path(read_values=lambda hive, path: {"SteamPath": 12345})
+        is None
+    )
+
+
+def test_steam_install_path_defaults_to_the_real_registry_without_reading_it():
+    parameters = inspect.signature(windows.steam_install_path).parameters
+    assert parameters["read_values"].default is windows._registry_subkey_values
