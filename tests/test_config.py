@@ -109,6 +109,32 @@ def test_a_fractional_retention_days_is_rejected():
         load_config_from_text("retention_days = 7.5")
 
 
+def test_project_folders_is_empty_by_default():
+    assert load_config_from_text("").project_folders == ()
+
+
+def test_project_folders_is_read_from_the_root():
+    config = load_config_from_text(
+        'project_folders = ["C:\\\\dev\\\\a", "D:\\\\dev\\\\b"]'
+    )
+    assert config.project_folders == ("C:\\dev\\a", "D:\\dev\\b")
+
+
+def test_project_folders_must_be_a_list():
+    with pytest.raises(ConfigError):
+        load_config_from_text('project_folders = "C:\\\\dev\\\\a"')
+
+
+def test_project_folders_rejects_a_non_string_entry():
+    with pytest.raises(ConfigError):
+        load_config_from_text("project_folders = [1]")
+
+
+def test_project_folders_rejects_an_empty_string_entry():
+    with pytest.raises(ConfigError):
+        load_config_from_text('project_folders = [""]')
+
+
 def test_unknown_keys_are_ignored_for_forward_compatibility():
     config = load_config_from_text('something_new = "x"\n[volumes."C:"]\nmore = 1\n')
     assert config.volumes == {"C:": VolumeLimit()}

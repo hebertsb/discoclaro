@@ -58,6 +58,7 @@ def load_config_from_text(text: str, source: str = "<texto>") -> Config:
             retention_days=(
                 DEFAULT_RETENTION_DAYS if retention_days is None else retention_days
             ),
+            project_folders=_build_project_folders(data.get("project_folders", [])),
         )
     except ValueError as error:
         raise ConfigError(f"{source}: {error}") from error
@@ -142,6 +143,17 @@ def _build_growth(raw: object) -> GrowthLimits:
         max_growth_gb=_optional_number(raw, "max_growth_gb", "growth"),
         new_file_gb=_optional_number(raw, "new_file_gb", "growth"),
     )
+
+
+def _build_project_folders(raw: object) -> tuple[str, ...]:
+    if not isinstance(raw, list):
+        raise ValueError("'project_folders' must be a list")
+    folders = []
+    for index, value in enumerate(raw):
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"project_folders[{index}] must be a non-empty string")
+        folders.append(value)
+    return tuple(folders)
 
 
 def _build_disabled_alerts(raw: object) -> frozenset[str]:

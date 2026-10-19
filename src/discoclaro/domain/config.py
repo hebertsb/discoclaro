@@ -49,6 +49,7 @@ class Config:
     min_display_gb: float = DEFAULT_MIN_DISPLAY_GB
     disabled_alerts: frozenset[str] = frozenset()
     retention_days: int = DEFAULT_RETENTION_DAYS
+    project_folders: tuple[str, ...] = ()
 
     def min_display_bytes(self) -> int:
         """`min_display_gb` en bytes, para comparar directo con tamaños del escaneo."""

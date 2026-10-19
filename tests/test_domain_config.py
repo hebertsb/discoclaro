@@ -27,6 +27,10 @@ def test_a_default_config_uses_the_default_noise_floor():
     assert Config().min_display_gb == DEFAULT_MIN_DISPLAY_GB
 
 
+def test_a_default_config_has_no_project_folders():
+    assert Config().project_folders == ()
+
+
 def test_min_display_bytes_converts_gb_to_bytes():
     assert Config(min_display_gb=2.5).min_display_bytes() == round(2.5 * GIB)
 
