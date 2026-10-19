@@ -182,3 +182,57 @@ def test_inspect_skips_a_manifest_that_cannot_be_read():
         list_appmanifests=list_appmanifests,
     )
     assert insight is None
+
+
+def test_installed_games_keeps_the_library_of_each_game():
+    read_text, list_appmanifests = fake_files()
+    games = steam_inspector.installed_games(
+        steam_path=lambda: "C:\\Program Files (x86)\\Steam",
+        read_text=read_text,
+        list_appmanifests=list_appmanifests,
+    )
+    by_name = {game.name: game.library for game in games}
+    assert by_name == {
+        "Steamworks Common Redistributables": "C:\\Program Files (x86)\\Steam",
+        "Counter-Strike 2": "D:\\SteamLibrary",
+    }
+
+
+def test_installed_games_is_empty_when_steam_is_not_installed():
+    games = steam_inspector.installed_games(
+        steam_path=lambda: None,
+        read_text=lambda path: None,
+        list_appmanifests=lambda library: [],
+    )
+    assert games == []
+
+
+def test_misplaced_games_finds_the_real_case(monkeypatch):
+    read_text, list_appmanifests = fake_files()
+    games = steam_inspector.installed_games(
+        steam_path=lambda: "C:\\Program Files (x86)\\Steam",
+        read_text=read_text,
+        list_appmanifests=list_appmanifests,
+    )
+    found = steam_inspector.misplaced_games(
+        games=lambda: games, system_drive=lambda: "C:"
+    )
+    assert [m.name for m in found] == ["Steamworks Common Redistributables"]
+    assert found[0].other_drives == ("D:",)
+
+
+def test_misplaced_games_is_empty_with_no_games():
+    found = steam_inspector.misplaced_games(games=lambda: [], system_drive=lambda: "C:")
+    assert found == []
+
+
+def test_misplaced_games_is_empty_when_everything_is_on_one_drive():
+    games = [
+        steam_inspector.SteamGame(
+            name="x", library="C:\\Program Files (x86)\\Steam", size_bytes=1
+        )
+    ]
+    found = steam_inspector.misplaced_games(
+        games=lambda: games, system_drive=lambda: "C:"
+    )
+    assert found == []

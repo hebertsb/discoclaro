@@ -14,11 +14,23 @@ Steam no está instalado o no se puede leer nada, se omite sin error.
 import os
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from discoclaro.domain.insights import Insight, InsightItem
+from discoclaro.domain.placement import Misplaced, StorageLocation, find_misplaced
 from discoclaro.platform import windows
 
 MAX_FILE_BYTES = 1_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class SteamGame:
+    """Un juego instalado, en qué biblioteca (carpeta raíz, no toda la ruta
+    del juego) y cuánto ocupa (T2C.5, además de T2C.1)."""
+
+    name: str
+    library: str
+    size_bytes: int
 
 
 def _read_text(path: str) -> str | None:
@@ -61,7 +73,7 @@ def _library_paths(base: str, read_text: Callable[[str], str | None]) -> list[st
     return paths if paths else [base]
 
 
-def _parse_appmanifest(content: str) -> InsightItem | None:
+def _parse_appmanifest(content: str) -> tuple[str, int] | None:
     names = _vdf_values(content, "name")
     sizes = _vdf_values(content, "SizeOnDisk")
     if not names or not sizes:
@@ -72,7 +84,31 @@ def _parse_appmanifest(content: str) -> InsightItem | None:
         return None
     if size <= 0:
         return None
-    return InsightItem(name=names[0], size_bytes=size)
+    return names[0], size
+
+
+def installed_games(
+    *,
+    steam_path: Callable[[], str | None] = windows.steam_install_path,
+    read_text: Callable[[str], str | None] = _read_text,
+    list_appmanifests: Callable[[str], list[str]] = _list_appmanifests,
+) -> list[SteamGame]:
+    """Cada juego instalado, con la biblioteca donde vive (T2C.5, además de
+    T2C.1); vacía si Steam no está instalado o no hay nada que leer."""
+    base = steam_path()
+    if base is None:
+        return []
+    games = []
+    for library in _library_paths(base, read_text):
+        for manifest_path in list_appmanifests(library):
+            content = read_text(manifest_path)
+            if content is None:
+                continue
+            parsed = _parse_appmanifest(content)
+            if parsed is not None:
+                name, size = parsed
+                games.append(SteamGame(name=name, library=library, size_bytes=size))
+    return games
 
 
 def inspect(
@@ -82,18 +118,30 @@ def inspect(
     list_appmanifests: Callable[[str], list[str]] = _list_appmanifests,
 ) -> Insight | None:
     """La huella de los juegos instalados, o `None` si no hay nada que decir."""
-    base = steam_path()
-    if base is None:
+    games = installed_games(
+        steam_path=steam_path, read_text=read_text, list_appmanifests=list_appmanifests
+    )
+    if not games:
         return None
-    items = []
-    for library in _library_paths(base, read_text):
-        for manifest_path in list_appmanifests(library):
-            content = read_text(manifest_path)
-            if content is None:
-                continue
-            item = _parse_appmanifest(content)
-            if item is not None:
-                items.append(item)
-    if not items:
-        return None
-    return Insight(program="steam", items=tuple(items))
+    items = tuple(InsightItem(name=g.name, size_bytes=g.size_bytes) for g in games)
+    return Insight(program="steam", items=items)
+
+
+def misplaced_games(
+    *,
+    games: Callable[[], list[SteamGame]] = installed_games,
+    system_drive: Callable[[], str] = windows.system_drive,
+) -> list[Misplaced]:
+    """Los juegos instalados en la unidad del sistema mientras Steam también
+    tiene bibliotecas en otras unidades (T2C.5): el caso real de la tarea, un
+    juego grande en C: con una biblioteca ya registrada en D:."""
+    locations = [
+        StorageLocation(
+            name=game.name,
+            drive=os.path.splitdrive(game.library)[0],
+            size_bytes=game.size_bytes,
+        )
+        for game in games()
+        if os.path.splitdrive(game.library)[0]
+    ]
+    return find_misplaced(locations, system_drive())

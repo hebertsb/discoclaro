@@ -594,3 +594,14 @@ def run_in_wsl(
         text=True,
         timeout=timeout,
     )
+
+
+def system_drive(environ: Mapping[str, str] | None = None) -> str:
+    """La unidad donde está instalado Windows (T2C.5), de `%SystemDrive%`
+    ("C:" en casi todas las instalaciones reales). Lanza `OSError` si no está
+    fijada: sin esto no hay con qué comparar un dato mal ubicado."""
+    environ = os.environ if environ is None else environ
+    drive = environ.get("SystemDrive", "")
+    if not drive:
+        raise OSError("SystemDrive is not set")
+    return drive

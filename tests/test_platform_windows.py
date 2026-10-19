@@ -875,3 +875,22 @@ def test_run_in_wsl_calls_wsl_exe_with_the_distro_and_the_command():
 def test_run_in_wsl_defaults_to_the_real_subprocess_without_calling_it():
     parameters = inspect.signature(windows.run_in_wsl).parameters
     assert parameters["run"].default is subprocess.run
+
+
+def test_system_drive_reads_the_real_variable_shape():
+    assert windows.system_drive({"SystemDrive": "C:"}) == "C:"
+
+
+def test_system_drive_raises_when_missing():
+    with pytest.raises(OSError):
+        windows.system_drive({})
+
+
+def test_system_drive_raises_when_empty():
+    with pytest.raises(OSError):
+        windows.system_drive({"SystemDrive": ""})
+
+
+def test_system_drive_reads_the_real_environment_by_default(monkeypatch):
+    monkeypatch.setenv("SystemDrive", "D:")
+    assert windows.system_drive() == "D:"
