@@ -253,6 +253,14 @@ _INSERT_FOOTPRINT = """
 
 _DELETE_FOOTPRINTS = "DELETE FROM program_footprints WHERE program_id = ?"
 
+_SELECT_FOOTPRINTS_OF_PROGRAM = """
+    SELECT f.path, f.size_bytes, f.confidence, f.reason
+    FROM program_footprints f
+    JOIN programs p ON p.id = f.program_id
+    WHERE p.name = ?
+    ORDER BY f.path
+"""
+
 _DELETE_SNAPSHOT = "DELETE FROM snapshots WHERE id = ?"
 
 # En Python, un sustituto suelto (UTF-16 inválido) es siempre un carácter solo.
@@ -544,6 +552,24 @@ class Store:
         except BaseException:
             _rollback(self._connection)
             raise
+
+    def footprints_of_program(self, name: str) -> list[Footprint]:
+        """La huella ya guardada de un programa (T2B.7), ordenada por ruta;
+        vacía si nunca se guardó ninguna. `last_modified` siempre es `None`:
+        esa columna no se persiste, solo cuándo se guardó (`recorded_at`)."""
+        rows = self._connection.execute(
+            _SELECT_FOOTPRINTS_OF_PROGRAM, (_clean(name),)
+        ).fetchall()
+        return [
+            Footprint(
+                path=path,
+                size_bytes=size_bytes,
+                last_modified=None,
+                confidence=confidence,
+                reason=reason,
+            )
+            for path, size_bytes, confidence, reason in rows
+        ]
 
 
 def _clean(text: str) -> str:

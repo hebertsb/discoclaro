@@ -363,6 +363,41 @@ def test_footprints_are_deleted_with_their_program(store):
     assert footprint_rows(store, "A") == []
 
 
+def test_footprints_of_program_reads_back_what_was_saved(store):
+    store.save_programs([make_program()], T0)
+    store.save_footprints(
+        "Acme App",
+        [
+            make_footprint(path="C:\\Program Files\\Acme", size_bytes=2048),
+            make_footprint(
+                path="C:\\Users\\x\\AppData\\Roaming\\Acme",
+                size_bytes=512,
+                confidence="low",
+                reason="partial_name_match",
+            ),
+        ],
+        T0,
+    )
+    found = store.footprints_of_program("Acme App")
+    assert [f.path for f in found] == [
+        "C:\\Program Files\\Acme",
+        "C:\\Users\\x\\AppData\\Roaming\\Acme",
+    ]
+    assert found[0].size_bytes == 2048
+    assert found[0].confidence == "high"
+    assert found[0].reason == "install_location"
+    assert found[0].last_modified is None
+
+
+def test_footprints_of_program_is_empty_for_an_unknown_program(store):
+    assert store.footprints_of_program("Ghost") == []
+
+
+def test_footprints_of_program_is_empty_when_none_were_ever_saved(store):
+    store.save_programs([make_program(name="A")], T0)
+    assert store.footprints_of_program("A") == []
+
+
 def test_an_alert_never_fired_has_no_last_time(store):
     assert store.last_alert_at("volume_low_free", "C:") is None
 

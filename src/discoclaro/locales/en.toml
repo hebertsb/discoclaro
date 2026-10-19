@@ -130,6 +130,9 @@ installed_title = "Program installed"
 installed_message = "{name} was installed in {location} ({size})."
 installed_message_with_extra = "{name} was installed in {location} ({size}) plus {extra_size} more across {extra_count} other folders."
 installed_unknown_size = "{name} was installed, but no folder of its own was found to measure."
+uninstalled_title = "Program uninstalled"
+uninstalled_message = "{name} was uninstalled; {size} were left in {count} folders. Run \"discoclaro leftovers\" to see the detail."
+uninstalled_clean = "{name} was uninstalled and no leftovers of any appreciable size remained."
 
 [footprints]
 confidence_high = "high"

@@ -1,19 +1,19 @@
-"""Caso de uso "programas" (T2B.5): aviso de instalación.
+"""Caso de uso "programas": avisos de instalación y de desinstalación.
 
-Compara el inventario del registro con el que ya se guardó (T2B.2/T2B.3); de cada
-programa recién instalado mide su carpeta de instalación y, entre las carpetas de
-primer nivel de `%LOCALAPPDATA%`, `%APPDATA%` y el perfil del usuario, las que ya
-parecen suyas por el nombre (T2B.4), guarda esa huella y notifica qué se instaló,
-en qué unidad y carpeta y cuánto ocupa. Como marca el flujo E del plan
-(`discoclaro programs-check ─► programs_service ─► adapters.notifier`), este
+`check_programs()` compara el inventario del registro con el que ya se guardó
+(T2B.2/T2B.3). De cada programa **recién instalado** (T2B.5) mide su carpeta de
+instalación y, entre las carpetas de primer nivel de `%LOCALAPPDATA%`, `%APPDATA%`
+y el perfil del usuario, las que ya parecen suyas por el nombre (T2B.4), guarda esa
+huella y notifica qué se instaló, en qué unidad y carpeta y cuánto ocupa. De cada
+programa **recién desinstalado** (T2B.7) mide qué sigue existiendo de su huella ya
+guardada y de la misma búsqueda por nombre, actualiza la huella guardada (puede
+haber cambiado o desaparecido) y notifica cuánto quedó. Como marca el flujo E del
+plan (`discoclaro programs-check ─► programs_service ─► adapters.notifier`), este
 servicio es quien notifica, con el texto ya traducido.
 
 La primera revisión (la base, sin nada que comparar todavía) no notifica nada: si
 no se hiciera esta distinción, los ~100 programas ya instalados en una máquina
 real aparecerían todos como "recién instalados" la primera vez que se corre.
-
-Alcance a propósito: solo instalaciones (`diff.installed`). Las desinstalaciones
-quedan para T2B.7.
 
 También `find_leftovers(name)` (T2B.6), para un programa que ya se desinstaló antes
 de usar discoclaro y por eso no tiene ningún `Program` ni huella guardada: busca
@@ -24,7 +24,8 @@ exista.
 import os
 import sqlite3
 import stat
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -61,6 +62,25 @@ class ProgramsCheckError(Exception):
         self.target = target
 
 
+@dataclass(frozen=True, slots=True)
+class UninstallLeftovers:
+    """Lo que sigue existiendo de un programa recién desinstalado (T2B.7): el
+    programa y la lista completa de restos (ruta, tamaño, fecha, confianza y
+    motivo de cada uno), vacía si no quedó nada apreciable."""
+
+    program: Program
+    footprints: tuple[Footprint, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ProgramsCheckResult:
+    """Lo que cambió en una revisión del inventario: programas recién instalados
+    y, de cada uno recién desinstalado, lo que le quedó."""
+
+    installed: tuple[Program, ...]
+    uninstalled: tuple[UninstallLeftovers, ...]
+
+
 def _display(text: str) -> str:
     return limit_length(safe_text(text))
 
@@ -80,21 +100,47 @@ def _is_drive_root(path: str) -> bool:
     return bool(drive) and rest.rstrip("\\/") == ""
 
 
-def _candidate_paths(program: Program, environment: Mapping[str, str]) -> list[str]:
-    """Las rutas a medir de verdad para este programa: su instalación registrada,
-    más las carpetas de primer nivel de las ubicaciones típicas cuyo nombre ya
-    parece relacionado. `classify_footprint` decide después, con tamaño y fecha
-    reales, cuáles de verdad cuentan como huella."""
+def _search_root_candidates(
+    program: Program, environment: Mapping[str, str]
+) -> list[str]:
+    """Las carpetas de primer nivel de las ubicaciones típicas (`%LOCALAPPDATA%`,
+    `%APPDATA%`, `%USERPROFILE%`) cuyo nombre ya parece relacionado con `program`,
+    sin mirar todavía tamaño ni fecha (T2B.5/T2B.6/T2B.7)."""
     paths = []
-    if program.install_location and not _is_drive_root(program.install_location):
-        paths.append(program.install_location)
     for variable in SEARCH_ROOT_VARIABLES:
         base = environment.get(variable)
         if not base:
             continue
         for folder in _top_level_folders(base):
-            if folder != program.install_location and might_be_related(folder, program):
+            if might_be_related(folder, program):
                 paths.append(folder)
+    return paths
+
+
+def _candidate_paths(program: Program, environment: Mapping[str, str]) -> list[str]:
+    """Las rutas a medir de verdad para un programa recién instalado (T2B.5): su
+    instalación registrada, más las carpetas candidatas de las ubicaciones
+    típicas. `classify_footprint` decide después, con tamaño y fecha reales,
+    cuáles de verdad cuentan como huella."""
+    paths = []
+    if program.install_location and not _is_drive_root(program.install_location):
+        paths.append(program.install_location)
+    for folder in _search_root_candidates(program, environment):
+        if folder != program.install_location:
+            paths.append(folder)
+    return paths
+
+
+def _uninstall_candidate_paths(
+    program: Program, known_paths: Iterable[str], environment: Mapping[str, str]
+) -> list[str]:
+    """Las rutas a medir de verdad para un programa recién desinstalado (T2B.7):
+    su huella ya guardada (si discoclaro llegó a verlo instalado), más las
+    carpetas candidatas de las ubicaciones típicas que no estuvieran ya ahí."""
+    paths = list(known_paths)
+    for folder in _search_root_candidates(program, environment):
+        if folder not in paths:
+            paths.append(folder)
     return paths
 
 
@@ -152,6 +198,44 @@ def _format_install_notice(
     )
 
 
+def _format_uninstall_notice(
+    program: Program, footprints: tuple[Footprint, ...]
+) -> tuple[str, str]:
+    title = t("programs.uninstalled_title")
+    name = _display(program.name)
+    if not footprints:
+        return title, t("programs.uninstalled_clean", name=name)
+    decimal = t("format.decimal_separator")
+    size = format_bytes(sum(f.size_bytes for f in footprints), decimal)
+    count = format_int(len(footprints), t("format.thousands_separator"))
+    return title, t("programs.uninstalled_message", name=name, size=size, count=count)
+
+
+def _uninstall_leftovers(
+    store: Store,
+    program: Program,
+    *,
+    environment: Mapping[str, str],
+    inspect: Callable[[str], FolderCandidate | None],
+    moment: datetime,
+) -> UninstallLeftovers:
+    """Mide lo que sigue existiendo de un programa recién desinstalado (T2B.7):
+    su huella ya guardada (si discoclaro llegó a verlo instalado) más la misma
+    búsqueda por nombre de T2B.6, y actualiza la huella guardada con lo que de
+    verdad sigue estando."""
+    known_paths = [f.path for f in store.footprints_of_program(program.name)]
+    candidates = [
+        candidate
+        for path in _uninstall_candidate_paths(program, known_paths, environment)
+        if (candidate := inspect(path)) is not None
+    ]
+    footprints = tuple(
+        footprints_of(program, candidates, known_footprint_paths=frozenset(known_paths))
+    )
+    store.save_footprints(program.name, footprints, moment)
+    return UninstallLeftovers(program=program, footprints=footprints)
+
+
 def check_programs(
     data_dir: Path | None = None,
     *,
@@ -160,11 +244,11 @@ def check_programs(
     environment: Callable[[], Mapping[str, str]] = windows.environment_variables,
     inspect: Callable[[str], FolderCandidate | None] = inspect_folder,
     notify: Callable[[str, str], None] = notifier.send_notification,
-) -> tuple[Program, ...]:
+) -> ProgramsCheckResult:
     """Revisa el inventario de programas: guarda la revisión y, por cada programa
-    recién instalado, mide su carpeta y sus candidatas, guarda la huella y
-    notifica. Devuelve los programas detectados como recién instalados (vacío en
-    la primera revisión, que solo guarda la base).
+    recién instalado o recién desinstalado, mide su carpeta (o lo que le quedó),
+    guarda la huella y notifica. Vacío en la primera revisión, que solo guarda
+    la base para poder comparar la próxima.
     """
     directory = windows.default_data_dir() if data_dir is None else data_dir
     database = directory / DATABASE_NAME
@@ -179,7 +263,7 @@ def check_programs(
         moment = now()
         store.save_programs(after, moment)
         if is_first_check:
-            return ()
+            return ProgramsCheckResult(installed=(), uninstalled=())
         diff = diff_inventories(before, after)
         env = environment()
         for program in diff.installed:
@@ -192,7 +276,16 @@ def check_programs(
             if footprints:
                 store.save_footprints(program.name, footprints, moment)
             notify(*_format_install_notice(program, footprints))
-        return diff.installed
+        uninstalled = []
+        for program in diff.uninstalled:
+            leftovers = _uninstall_leftovers(
+                store, program, environment=env, inspect=inspect, moment=moment
+            )
+            notify(*_format_uninstall_notice(program, leftovers.footprints))
+            uninstalled.append(leftovers)
+        return ProgramsCheckResult(
+            installed=diff.installed, uninstalled=tuple(uninstalled)
+        )
 
 
 def find_leftovers(
@@ -223,7 +316,7 @@ def find_leftovers(
     )
     candidates = [
         candidate
-        for path in _candidate_paths(program, environment())
+        for path in _search_root_candidates(program, environment())
         if (candidate := inspect(path)) is not None
     ]
     found = footprints_of(program, candidates)

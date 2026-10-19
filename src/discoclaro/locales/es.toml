@@ -130,6 +130,9 @@ installed_title = "Programa instalado"
 installed_message = "Se instaló {name} en {location} ({size})."
 installed_message_with_extra = "Se instaló {name} en {location} ({size}) y {extra_size} más en otras {extra_count} carpetas."
 installed_unknown_size = "Se instaló {name}, pero no se encontró ninguna carpeta suya para medir."
+uninstalled_title = "Programa desinstalado"
+uninstalled_message = "Se desinstaló {name}; quedaron {size} en {count} carpetas. Corré «discoclaro leftovers» para ver el detalle."
+uninstalled_clean = "Se desinstaló {name} y no quedó ningún resto de tamaño apreciable."
 
 [footprints]
 confidence_high = "alta"

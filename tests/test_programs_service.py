@@ -20,6 +20,7 @@ from discoclaro.domain.models import Program
 from discoclaro.platform import windows
 from discoclaro.services.programs_service import (
     ProgramsCheckError,
+    ProgramsCheckResult,
     check_programs,
     find_leftovers,
 )
@@ -68,7 +69,7 @@ def test_the_first_check_saves_the_baseline_without_notifying(tmp_path):
         inspect=fake_inspect({}),
         notify=notify,
     )
-    assert result == ()
+    assert result == ProgramsCheckResult(installed=(), uninstalled=())
     assert calls == []
     with Store.open_readonly(data_dir / "discoclaro.db") as store:
         assert {p.name for p in store.active_programs()} == {"A", "B"}
@@ -97,7 +98,8 @@ def test_a_newly_installed_program_is_detected_and_notified(tmp_path):
         inspect=fake_inspect({"C:\\Program Files\\Acme": 2048}),
         notify=notify,
     )
-    assert [p.name for p in result] == ["Acme App"]
+    assert [p.name for p in result.installed] == ["Acme App"]
+    assert result.uninstalled == ()
     assert calls == [
         (
             "Programa instalado",
@@ -130,7 +132,7 @@ def test_nothing_is_notified_when_the_inventory_does_not_change(tmp_path):
         inspect=fake_inspect({}),
         notify=notify,
     )
-    assert result == ()
+    assert result == ProgramsCheckResult(installed=(), uninstalled=())
     assert calls == []
 
 
@@ -193,6 +195,202 @@ def test_the_footprint_of_a_newly_installed_program_is_saved(tmp_path):
             "SELECT path, size_bytes, confidence, reason FROM program_footprints"
         ).fetchall()
     assert rows == [("C:\\Program Files\\Acme", 2048, "high", "install_location")]
+
+
+def test_an_uninstalled_programs_known_footprint_still_existing_is_notified(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _, notify = fake_notify()
+    check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [make_program(name="Placeholder")],
+        environment=dict,
+        inspect=fake_inspect({}),
+        notify=notify,
+    )
+    check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [
+            make_program(name="Placeholder"),
+            make_program(name="Acme App"),
+        ],
+        environment=dict,
+        inspect=fake_inspect({"C:\\Program Files\\Acme": 2048}),
+        notify=notify,
+    )
+    calls, notify = fake_notify()
+    result = check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [make_program(name="Placeholder")],
+        environment=dict,
+        inspect=fake_inspect({"C:\\Program Files\\Acme": 1024}),
+        notify=notify,
+    )
+    assert result.installed == ()
+    [leftovers] = result.uninstalled
+    assert leftovers.program.name == "Acme App"
+    assert [f.path for f in leftovers.footprints] == ["C:\\Program Files\\Acme"]
+    assert leftovers.footprints[0].size_bytes == 1024
+    assert leftovers.footprints[0].confidence == "high"
+    assert leftovers.footprints[0].reason == "known_footprint"
+    assert calls == [
+        (
+            "Programa desinstalado",
+            "Se desinstaló Acme App; quedaron 1,0 KiB en 1 carpetas. "
+            "Corré «discoclaro leftovers» para ver el detalle.",
+        )
+    ]
+
+
+def test_an_uninstalled_program_with_nothing_left_notifies_clean(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _, notify = fake_notify()
+    check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [make_program(name="Placeholder")],
+        environment=dict,
+        inspect=fake_inspect({}),
+        notify=notify,
+    )
+    check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [
+            make_program(name="Placeholder"),
+            make_program(name="Acme App", install_location=None),
+        ],
+        environment=dict,
+        inspect=fake_inspect({}),
+        notify=notify,
+    )
+    calls, notify = fake_notify()
+    result = check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [make_program(name="Placeholder")],
+        environment=dict,
+        inspect=fake_inspect({}),
+        notify=notify,
+    )
+    [leftovers] = result.uninstalled
+    assert leftovers.footprints == ()
+    assert calls == [
+        (
+            "Programa desinstalado",
+            "Se desinstaló Acme App y no quedó ningún resto de tamaño apreciable.",
+        )
+    ]
+
+
+def test_a_known_footprint_path_that_no_longer_exists_is_dropped(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _, notify = fake_notify()
+    check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [make_program(name="Placeholder")],
+        environment=dict,
+        inspect=fake_inspect({}),
+        notify=notify,
+    )
+    check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [
+            make_program(name="Placeholder"),
+            make_program(name="Acme App"),
+        ],
+        environment=dict,
+        inspect=fake_inspect({"C:\\Program Files\\Acme": 2048}),
+        notify=notify,
+    )
+    result = check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [make_program(name="Placeholder")],
+        environment=dict,
+        inspect=fake_inspect({}),
+        notify=notify,
+    )
+    [leftovers] = result.uninstalled
+    assert leftovers.footprints == ()
+
+
+def test_an_uninstalled_program_without_a_known_footprint_still_searches_by_name(
+    tmp_path,
+):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    local = tmp_path / "local"
+    local.mkdir()
+    (local / "Acme").mkdir()
+    _, notify = fake_notify()
+    check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [
+            make_program(name="Acme App", publisher="Acme", install_location=None)
+        ],
+        environment=lambda: {"%LOCALAPPDATA%": str(local)},
+        inspect=fake_inspect({}),
+        notify=notify,
+    )
+    calls, notify = fake_notify()
+    inspect = fake_inspect({str(local / "Acme"): 4096})
+    result = check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [],
+        environment=lambda: {"%LOCALAPPDATA%": str(local)},
+        inspect=inspect,
+        notify=notify,
+    )
+    [leftovers] = result.uninstalled
+    assert [f.path for f in leftovers.footprints] == [str(local / "Acme")]
+    assert leftovers.footprints[0].confidence == "medium"
+    assert leftovers.footprints[0].reason == "name_match"
+
+
+def test_uninstall_replaces_the_saved_footprint_with_the_fresh_result(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _, notify = fake_notify()
+    check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [make_program(name="Placeholder")],
+        environment=dict,
+        inspect=fake_inspect({}),
+        notify=notify,
+    )
+    check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [
+            make_program(name="Placeholder"),
+            make_program(name="Acme App"),
+        ],
+        environment=dict,
+        inspect=fake_inspect({"C:\\Program Files\\Acme": 2048}),
+        notify=notify,
+    )
+    check_programs(
+        data_dir,
+        now=lambda: T0,
+        read_programs=lambda: [make_program(name="Placeholder")],
+        environment=dict,
+        inspect=fake_inspect({"C:\\Program Files\\Acme": 1024}),
+        notify=notify,
+    )
+    with Store.open_readonly(data_dir / "discoclaro.db") as store:
+        saved = store.footprints_of_program("Acme App")
+    assert [f.size_bytes for f in saved] == [1024]
 
 
 def test_a_related_folder_in_a_search_root_is_measured_and_reported(tmp_path):
