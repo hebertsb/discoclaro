@@ -2,3 +2,5 @@
 # `requirements-runtime.txt` se genera a partir de este archivo con sus hashes (ver
 # docs/DEPENDENCIAS.md), para poder instalarlas verificadas con `pip install --require-hashes`.
 windows-toasts==1.3.1
+fastapi==0.146.0
+uvicorn[standard]==0.54.0

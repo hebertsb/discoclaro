@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Suárez Burgos Hebert" }]
-dependencies = ["windows-toasts==1.3.1"]
+dependencies = ["windows-toasts==1.3.1", "fastapi==0.146.0", "uvicorn[standard]==0.54.0"]
 
 [project.scripts]
 discoclaro = "discoclaro.interfaces.cli:main"

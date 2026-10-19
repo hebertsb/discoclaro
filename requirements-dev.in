@@ -3,3 +3,4 @@
 # este archivo con todas las dependencias y sus hashes (ver docs/DEPENDENCIAS.md).
 pytest==9.1.1
 ruff==0.17.1
+httpx==0.28.1
