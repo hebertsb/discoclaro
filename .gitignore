@@ -13,6 +13,7 @@ build/
 
 # Frontend
 node_modules/
+*.tsbuildinfo
 
 # Bases de datos de escaneo (rutas reales del usuario: nunca se versionan)
 *.db
