@@ -838,3 +838,40 @@ def test_steam_install_path_is_none_when_the_value_has_the_wrong_type():
 def test_steam_install_path_defaults_to_the_real_registry_without_reading_it():
     parameters = inspect.signature(windows.steam_install_path).parameters
     assert parameters["read_values"].default is windows._registry_subkey_values
+
+
+def test_docker_vhdx_path_is_the_real_fixed_location_when_it_exists():
+    environ = {"LOCALAPPDATA": "C:\\Users\\x\\AppData\\Local"}
+    expected = "C:\\Users\\x\\AppData\\Local\\Docker\\wsl\\disk\\docker_data.vhdx"
+    assert windows.docker_vhdx_path(environ=environ, exists=lambda p: True) == expected
+
+
+def test_docker_vhdx_path_is_none_when_the_file_does_not_exist():
+    environ = {"LOCALAPPDATA": "C:\\Users\\x\\AppData\\Local"}
+    assert windows.docker_vhdx_path(environ=environ, exists=lambda p: False) is None
+
+
+def test_docker_vhdx_path_is_none_without_localappdata():
+    assert windows.docker_vhdx_path(environ={}, exists=lambda p: True) is None
+
+
+def test_docker_vhdx_path_reads_the_real_environment_by_default(monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", "R:\\Local")
+    expected = "R:\\Local\\Docker\\wsl\\disk\\docker_data.vhdx"
+    assert windows.docker_vhdx_path(exists=lambda p: True) == expected
+
+
+def test_run_in_wsl_calls_wsl_exe_with_the_distro_and_the_command():
+    calls, run = fake_run()
+    windows.run_in_wsl("docker-desktop", ["df", "-k"], run=run)
+    (args, kwargs) = calls[0]
+    assert args[0].lower().endswith("wsl.exe")
+    assert args[1:] == ["-d", "docker-desktop", "df", "-k"]
+    assert kwargs["capture_output"] is True
+    assert kwargs["text"] is True
+    assert "shell" not in kwargs
+
+
+def test_run_in_wsl_defaults_to_the_real_subprocess_without_calling_it():
+    parameters = inspect.signature(windows.run_in_wsl).parameters
+    assert parameters["run"].default is subprocess.run

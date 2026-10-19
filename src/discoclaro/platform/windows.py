@@ -549,3 +549,48 @@ def steam_install_path(
         return None
     path = values.get("SteamPath")
     return path if isinstance(path, str) and path else None
+
+
+def docker_vhdx_path(
+    *,
+    environ: Mapping[str, str] | None = None,
+    exists: Callable[[str], bool] = os.path.isfile,
+) -> str | None:
+    """Dónde está, de verdad, el disco virtual de Docker (T2C.2): el que usa
+    el motor WSL2 (`%LOCALAPPDATA%\\Docker\\wsl\\disk\\docker_data.vhdx`,
+    confirmado real en esta máquina), o `None` si no existe (no está
+    instalado, o usa el otro motor de Docker Desktop, Hyper-V, que guarda el
+    disco en otro lado). `exists` se puede inyectar para probar."""
+    environ = os.environ if environ is None else environ
+    local_app_data = environ.get("LOCALAPPDATA", "")
+    if not local_app_data:
+        return None
+    path = str(Path(local_app_data) / "Docker" / "wsl" / "disk" / "docker_data.vhdx")
+    return path if exists(path) else None
+
+
+def _wsl_path(environ: Mapping[str, str] | None = None) -> Path:
+    """Ruta completa de `wsl.exe`: nunca se confía en que esté en el PATH."""
+    environ = os.environ if environ is None else environ
+    windir = environ.get("WINDIR", "")
+    if not windir:
+        raise OSError("WINDIR is not set")
+    return Path(windir) / "System32" / "wsl.exe"
+
+
+def run_in_wsl(
+    distro: str,
+    command: Sequence[str],
+    *,
+    timeout: float = SCHEDULED_TASK_TIMEOUT_S,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> subprocess.CompletedProcess:
+    """Corre `command` (lista de argumentos, nunca un texto para una terminal)
+    dentro de la distribución WSL `distro`. `run` se puede inyectar para
+    probar sin ejecutar nada de verdad."""
+    return run(
+        [str(_wsl_path()), "-d", distro, *command],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
