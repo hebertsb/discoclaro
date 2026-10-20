@@ -44,6 +44,29 @@ export interface CategoryTotalOut {
   folders: number;
 }
 
+export interface SnapshotOut {
+  id: number;
+  volume: string;
+  taken_at: string;
+  total_bytes: number;
+  used_bytes: number;
+  free_bytes: number;
+  scanned_bytes: number;
+  duplicate_bytes: number;
+  system_files_bytes: number;
+  unreadable_count: number;
+  is_admin: boolean;
+}
+
+export interface GrowthOut {
+  before_snapshot_id: number;
+  after_snapshot_id: number;
+  before_taken_at: string;
+  after_taken_at: string;
+  folders: FolderGrowthOut[];
+  by_category: { category: string; before_bytes: number; after_bytes: number; grown_bytes: number }[] | null;
+}
+
 export interface VolumeSummaryOut {
   volume: VolumeOut;
   snapshot_id: number | null;

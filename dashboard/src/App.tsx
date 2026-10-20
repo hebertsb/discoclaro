@@ -2,21 +2,24 @@ import { useState } from "react";
 import Resumen from "./components/Resumen";
 import QueOcupa from "./components/QueOcupa";
 import Categorias from "./components/Categorias";
+import Crecimiento from "./components/Crecimiento";
 
 // Navegación mínima de pestañas: la barra lateral/inferior real (brief
 // de T3.2, sección 13.2) llega cuando haya más vistas.
-type Screen = "resumen" | "que-ocupa" | "categorias";
+type Screen = "resumen" | "que-ocupa" | "categorias" | "crecimiento";
 
 const SCREENS: { id: Screen; label: string }[] = [
   { id: "resumen", label: "Resumen" },
   { id: "que-ocupa", label: "Qué ocupa" },
   { id: "categorias", label: "Categorías" },
+  { id: "crecimiento", label: "Crecimiento" },
 ];
 
 const VIEWS: Record<Screen, () => React.JSX.Element> = {
   resumen: Resumen,
   "que-ocupa": QueOcupa,
   categorias: Categorias,
+  crecimiento: Crecimiento,
 };
 
 export default function App() {

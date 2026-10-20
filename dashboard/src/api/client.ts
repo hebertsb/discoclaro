@@ -1,4 +1,11 @@
-import type { CategoryTotalOut, PlanOut, SummaryOut, TreeOut } from "./types";
+import type {
+  CategoryTotalOut,
+  GrowthOut,
+  PlanOut,
+  SnapshotOut,
+  SummaryOut,
+  TreeOut,
+} from "./types";
 
 // Rutas relativas a propósito: en producción (T3.8) la misma API sirve el
 // HTML/JS construido, un solo origen, sin CORS; en desarrollo, el proxy de
@@ -40,4 +47,14 @@ export function fetchTree(path: string | null): Promise<TreeOut> {
 
 export function fetchCategories(): Promise<CategoryTotalOut[]> {
   return getJson<CategoryTotalOut[]>("/categories");
+}
+
+export function fetchSnapshots(volume: string | null): Promise<SnapshotOut[]> {
+  const query = volume === null ? "" : `?volume=${encodeURIComponent(volume)}`;
+  return getJson<SnapshotOut[]>(`/snapshots${query}`);
+}
+
+export function fetchGrowth(volume: string | null): Promise<GrowthOut> {
+  const query = volume === null ? "" : `?volume=${encodeURIComponent(volume)}`;
+  return getJson<GrowthOut>(`/growth${query}`);
 }
