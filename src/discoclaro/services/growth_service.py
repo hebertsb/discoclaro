@@ -72,6 +72,12 @@ def _resolved_name(target: str, volumes: Callable[[], list[Volume]]) -> str:
     return volume.name if ntpath.splitdrive(path)[1] == "\\" else path
 
 
+# Caché en memoria indexada por (before_id, after_id, top_n, by_category): los
+# snapshots guardados en SQLite son inmutables, así que comparar los mismos dos
+# snapshots dos veces nunca cambia y responde en <1 ms tras la primera vez.
+_growth_cache: dict[tuple[int, int, int, bool], Growth] = {}
+
+
 def build_growth(
     target: str | None,
     store: Store,
@@ -115,6 +121,16 @@ def build_growth(
     if before is None:
         raise GrowthError("growth_not_enough_history", after.volume)
 
+    use_cache = (
+        before.id is not None
+        and after.id is not None
+        and rules is load_builtin_catalog
+        and environment is windows.environment_variables
+    )
+    cache_key = (before.id or 0, after.id or 0, top_n, by_category)
+    if use_cache and cache_key in _growth_cache:
+        return _growth_cache[cache_key]
+
     before_nodes = store.nodes(before.id)
     after_nodes = store.nodes(after.id)
 
@@ -134,13 +150,16 @@ def build_growth(
         store.large_files(before.id), store.large_files(after.id)
     )[: max(top_n, 0)]
 
-    return Growth(
+    result = Growth(
         before=before,
         after=after,
         folders=folders,
         categories=categories,
         new_large_files=new_files,
     )
+    if use_cache:
+        _growth_cache[cache_key] = result
+    return result
 
 
 def run_growth(

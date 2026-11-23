@@ -10,6 +10,7 @@ __pycache__/
 # Construcción
 dist/
 build/
+*.spec
 
 # Frontend
 node_modules/

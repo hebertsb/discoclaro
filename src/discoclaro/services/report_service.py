@@ -66,6 +66,14 @@ def _resolved_name(target: str, volumes: Callable[[], list[Volume]]) -> str:
     return volume.name if ntpath.splitdrive(path)[1] == "\\" else path
 
 
+_report_cache: dict[tuple[int, int, float, bool], Report] = {}
+
+
+def _pick_default_snapshot(snapshots: list[Snapshot]) -> Snapshot:
+    volume_scans = [s for s in snapshots if s.is_volume_scan]
+    return volume_scans[0] if volume_scans else snapshots[0]
+
+
 def build_report(
     target: str | None,
     store: Store,
@@ -88,13 +96,23 @@ def build_report(
         snapshots = store.snapshots()
         if not snapshots:
             raise ReportError("report_no_snapshots", "")
-        snapshot = snapshots[0]
+        snapshot = _pick_default_snapshot(snapshots)
     else:
         name = _resolved_name(target, volumes)
         found = store.latest_snapshot(name)
         if found is None:
             raise ReportError("report_no_snapshot_for_target", target)
         snapshot = found
+
+    use_cache = (
+        snapshot.id is not None
+        and rules is load_builtin_catalog
+        and environment is windows.environment_variables
+    )
+    cache_key = (snapshot.id or 0, top_n, threshold_percent, by_category)
+    if use_cache and cache_key in _report_cache:
+        return _report_cache[cache_key]
+
     nodes = store.nodes(snapshot.id)
     top = tuple(sorted(nodes, key=lambda node: node.size_bytes, reverse=True))
     by_category_totals = None
@@ -102,13 +120,16 @@ def build_report(
         by_category_totals = category_totals(nodes, rules(), environment())[
             : max(top_n, 0)
         ]
-    return Report(
+    result = Report(
         snapshot=snapshot,
         top_folders=top[: max(top_n, 0)],
         total_folders=len(nodes),
         unexplained=unexplained_of(snapshot, threshold_percent),
         by_category=by_category_totals,
     )
+    if use_cache:
+        _report_cache[cache_key] = result
+    return result
 
 
 def run_report(

@@ -203,3 +203,65 @@ def _optional_number(
             bound = f"between {minimum} and {maximum}"
         raise ValueError(f"{path}.{field} must be {bound}")
     return value
+
+
+def _toml_key(text: str) -> str:
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def dump_config_to_toml(config: Config) -> str:
+    """Serializa `Config` a un texto TOML limpio y válido."""
+    lines: list[str] = [
+        f"min_display_gb = {config.min_display_gb}",
+        f"retention_days = {config.retention_days}",
+    ]
+    if config.project_folders:
+        items = ", ".join(_toml_key(f) for f in config.project_folders)
+        lines.append(f"project_folders = [{items}]")
+
+    if config.growth.max_growth_gb is not None or config.growth.new_file_gb is not None:
+        lines.append("")
+        lines.append("[growth]")
+        if config.growth.max_growth_gb is not None:
+            lines.append(f"max_growth_gb = {config.growth.max_growth_gb}")
+        if config.growth.new_file_gb is not None:
+            lines.append(f"new_file_gb = {config.growth.new_file_gb}")
+
+    if config.volumes:
+        lines.append("")
+        lines.append("[volumes]")
+        for vol_name, limit in sorted(config.volumes.items()):
+            fields = [f"warn_at_percent = {limit.warn_at_percent}"]
+            if limit.min_free_gb is not None:
+                fields.append(f"min_free_gb = {limit.min_free_gb}")
+            lines.append(f"{_toml_key(vol_name)} = {{ {', '.join(fields)} }}")
+
+    if config.budgets:
+        lines.append("")
+        lines.append("[budgets]")
+        for target, budget in sorted(config.budgets.items()):
+            lines.append(f"{_toml_key(target)} = {{ max_gb = {budget.max_gb} }}")
+
+    if config.disabled_alerts:
+        lines.append("")
+        lines.append("[alerts]")
+        for kind in sorted(config.disabled_alerts):
+            lines.append(f"{kind} = false")
+
+    return "\n".join(lines) + "\n"
+
+
+def save_user_config(config: Config, config_dir: str | Path | None = None) -> Path:
+    """Guarda `config` en `%APPDATA%\\discoclaro\\config.toml`, revalidando antes
+    de escribir que el TOML generado sea válido y que la ruta sea segura."""
+    directory = windows.default_config_dir() if config_dir is None else Path(config_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    windows.ensure_safe_to_write(directory)
+    path = directory / CONFIG_FILE_NAME
+    windows.ensure_safe_to_write(path)
+    toml_text = dump_config_to_toml(config)
+    load_config_from_text(toml_text, source=str(path))
+    path.write_text(toml_text, encoding="utf-8")
+    return path
+

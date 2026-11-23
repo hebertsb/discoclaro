@@ -9,6 +9,7 @@ elemento de la ruta, cualquiera sea.
 """
 
 import fnmatch
+import functools
 import re
 from collections.abc import Mapping, Sequence
 
@@ -16,12 +17,111 @@ from discoclaro.domain.rules import Rule
 
 ENVIRONMENT_VARIABLES = ("%USERPROFILE%", "%LOCALAPPDATA%", "%APPDATA%", "%TEMP%")
 _PLACEHOLDER = re.compile(r"<[^>]+>")
-_SEPARATORS = re.compile(r"[\\/]+")
 
 # Lo que vale cada coincidencia, para que gane la más específica: primero cuántos
 # elementos de la ruta son literales (sin comodín), y a igualdad, el patrón expandido
 # más largo. Entre dos igual de específicas, gana la que aparece antes en `rules`.
 _Score = tuple[int, int]
+_CompiledPattern = tuple[tuple[str, ...], bool, int, _Score, str | None]
+
+
+@functools.lru_cache(maxsize=1024)
+def _compile_pattern(
+    pattern: str, env_items: tuple[tuple[str, str], ...]
+) -> _CompiledPattern:
+    expanded = pattern
+    for variable, value in env_items:
+        expanded = expanded.replace(variable, value)
+    expanded = _PLACEHOLDER.sub("*", expanded)
+    raw_parts = expanded.replace("/", "\\").strip("\\").split("\\")
+    segments = tuple(part.lower() for part in raw_parts if part)
+    has_globstar = "**" in segments
+    min_len = len(segments) - segments.count("**")
+    literal_count = sum(1 for seg in segments if "*" not in seg)
+    score: _Score = (literal_count, len(expanded))
+    tail = (
+        segments[-1]
+        if (segments and "*" not in segments[-1] and "?" not in segments[-1])
+        else None
+    )
+    return segments, has_globstar, min_len, score, tail
+
+
+class CompiledCatalog:
+    """Índice en memoria del catálogo de reglas expandido para clasificar decenas de
+    miles de nodos en pocos milisegundos."""
+
+    __slots__ = ("by_tail", "rules", "wildcard_tails")
+
+    def __init__(
+        self, rules: Sequence[Rule], environment: Mapping[str, str]
+    ) -> None:
+        self.rules = tuple(rules)
+        env_items = tuple(
+            (var, environment[var])
+            for var in ENVIRONMENT_VARIABLES
+            if var in environment
+        )
+        by_tail: dict[str, list[tuple[int, tuple[str, ...], bool, int, _Score]]] = {}
+        wildcard_tails: list[tuple[int, tuple[str, ...], bool, int, _Score]] = []
+
+        for rule_idx, rule in enumerate(self.rules):
+            for pattern in rule.paths:
+                segs, has_gs, min_len, score, tail = _compile_pattern(
+                    pattern, env_items
+                )
+                if not segs:
+                    continue
+                entry = (rule_idx, segs, has_gs, min_len, score)
+                if tail is not None:
+                    by_tail.setdefault(tail, []).append(entry)
+                else:
+                    wildcard_tails.append(entry)
+
+        self.by_tail = {k: tuple(v) for k, v in by_tail.items()}
+        self.wildcard_tails = tuple(wildcard_tails)
+
+    def classify_path(self, path: str) -> Rule | None:
+        norm = path.replace("/", "\\").strip("\\").lower()
+        if not norm:
+            return None
+        path_segments = [part for part in norm.split("\\") if part]
+        if not path_segments:
+            return None
+        path_len = len(path_segments)
+        path_tail = path_segments[-1]
+        best_idx: int | None = None
+        best_key: tuple[int, int, int] | None = None
+
+        tail_group = self.by_tail.get(path_tail)
+        if tail_group:
+            for rule_idx, pat_segs, has_gs, min_len, score in tail_group:
+                if not has_gs:
+                    if len(pat_segs) != path_len:
+                        continue
+                elif path_len < min_len:
+                    continue
+                cand_key = (score[0], score[1], -rule_idx)
+                if best_key is not None and cand_key <= best_key:
+                    continue
+                if _match_segments_fast(pat_segs, 0, path_segments, 0):
+                    best_key = cand_key
+                    best_idx = rule_idx
+
+        for rule_idx, pat_segs, has_gs, min_len, score in self.wildcard_tails:
+            if not has_gs:
+                if len(pat_segs) != path_len:
+                    continue
+            elif path_len < min_len:
+                continue
+            cand_key = (score[0], score[1], -rule_idx)
+            if best_key is not None and cand_key <= best_key:
+                continue
+            if _match_segments_fast(pat_segs, 0, path_segments, 0):
+                best_key = cand_key
+                best_idx = rule_idx
+
+        return None if best_idx is None else self.rules[best_idx]
 
 
 def classify(
@@ -32,56 +132,31 @@ def classify(
     `None` si ninguna coincide. No sigue enlaces ni toca el disco: compara texto
     contra texto.
     """
-    best: Rule | None = None
-    best_score: _Score | None = None
-    for rule in rules:
-        score = _best_score(rule, path, environment)
-        if score is not None and (best_score is None or score > best_score):
-            best, best_score = rule, score
-    return best
+    return CompiledCatalog(rules, environment).classify_path(path)
 
 
-def _best_score(rule: Rule, path: str, environment: Mapping[str, str]) -> _Score | None:
-    scores = [
-        score
-        for pattern in rule.paths
-        if (score := _match(pattern, path, environment)) is not None
-    ]
-    return max(scores) if scores else None
-
-
-def _match(pattern: str, path: str, environment: Mapping[str, str]) -> _Score | None:
-    expanded = _expand(pattern, environment)
-    pattern_segments = _segments(expanded)
-    if not _match_segments(pattern_segments, _segments(path)):
-        return None
-    literal = sum(1 for segment in pattern_segments if "*" not in segment)
-    return (literal, len(expanded))
-
-
-def _expand(pattern: str, environment: Mapping[str, str]) -> str:
-    for variable in ENVIRONMENT_VARIABLES:
-        value = environment.get(variable)
-        if value is not None:
-            pattern = pattern.replace(variable, value)
-    return _PLACEHOLDER.sub("*", pattern)
-
-
-def _segments(path: str) -> list[str]:
-    return [part for part in _SEPARATORS.split(path.strip("\\/")) if part]
-
-
-def _match_segments(pattern: list[str], path: list[str]) -> bool:
-    """Compara segmento a segmento; `**` se come cero o más segmentos."""
-    if not pattern:
-        return not path
-    head, *rest = pattern
-    if head == "**":
-        if _match_segments(rest, path):
-            return True
-        return bool(path) and _match_segments(pattern, path[1:])
-    if not path:
-        return False
-    if not fnmatch.fnmatchcase(path[0].lower(), head.lower()):
-        return False
-    return _match_segments(rest, path[1:])
+def _match_segments_fast(
+    pattern: tuple[str, ...], p_idx: int, path: list[str], s_idx: int
+) -> bool:
+    """Compara segmento a segmento sin crear sublistas; `**` consume 0 o más."""
+    p_len = len(pattern)
+    s_len = len(path)
+    while p_idx < p_len:
+        head = pattern[p_idx]
+        if head == "**":
+            if _match_segments_fast(pattern, p_idx + 1, path, s_idx):
+                return True
+            return s_idx < s_len and _match_segments_fast(
+                pattern, p_idx, path, s_idx + 1
+            )
+        if s_idx >= s_len:
+            return False
+        cur = path[s_idx]
+        if "*" not in head and "?" not in head:
+            if cur != head:
+                return False
+        elif head != "*" and not fnmatch.fnmatchcase(cur, head):
+            return False
+        p_idx += 1
+        s_idx += 1
+    return s_idx == s_len

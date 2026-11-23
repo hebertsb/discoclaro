@@ -1,40 +1,51 @@
 /*
- * Design tokens del brief de diseño de T3.2 (aprobado por el usuario,
- * 2026-10-19; ver el plan del proyecto para el enlace al brief completo).
- *
- * Paleta de riesgo y categórica validada por contraste y daltonismo (no a
- * ojo); superficies oscuras ajustadas con una referencia de dashboard
- * oscuro, sin tocar los colores de riesgo/categóricos, que sí vienen con
- * los números de contraste calculados.
+ * Design tokens de discoclaro — Estilo "Admin Dashboard V20 (Royal Ice Blue)":
+ * - Tema por defecto ("Azul Claro V20"):
+ *   - Barra lateral y barra superior en azul marino suave (#1b2a4a → #22355e)
+ *   - Lienzo principal en azul hielo/lavanda suave (#dce6f7 → #eaf0fb)
+ *   - Tarjetas cristal blanco (#ffffff / 0.90) con bordes azulados sutiles y texto azul oscuro (#16223d)
+ *   - Acento principal azul cobalto vibrante (#3b63f6)
+ * - Tema alternativo ("Azul Noche"):
+ *   - Azul zafiro medio-oscuro (#15223c → #1c2e52), nunca negro puro, con tarjetas cristal azuladas.
  */
 
 :root {
   color-scheme: light;
 
-  /* Superficies y tinta (claro) */
-  --color-bg: #f9f9f7;
-  --color-surface: #fcfcfb;
-  --color-text-primary: #0b0b0b;
-  --color-text-secondary: #52514e;
-  --color-text-muted: #898781;
-  --color-border: #e1e0d9;
+  --color-bg: #e4ecfa;
+  --color-bg-gradient:
+    radial-gradient(ellipse 65% 55% at 12% 8%, rgba(59, 99, 246, 0.14) 0%, transparent 65%),
+    radial-gradient(ellipse 65% 55% at 88% 92%, rgba(99, 102, 241, 0.13) 0%, transparent 65%),
+    linear-gradient(135deg, #dce6f7 0%, #ebf1fc 52%, #d8e4f9 100%);
+  --color-sidebar-bg: linear-gradient(180deg, #1b2b4d 0%, #223661 55%, #192848 100%);
+  --color-topbar-bg: rgba(255, 255, 255, 0.82);
+  --color-surface: rgba(255, 255, 255, 0.90);
+  --color-surface-elevated: rgba(244, 248, 255, 0.95);
+  --color-text-primary: #16223d;
+  --color-text-secondary: #4c5f82;
+  --color-text-muted: #7688a8;
+  --color-border: rgba(34, 54, 97, 0.11);
 
-  /* Riesgo (nunca solo color: siempre con ícono y texto) */
-  --color-risk-safe: #0ca30c;
-  --color-risk-review: #fab219;
-  --color-risk-no-touch: #d03b3b;
+  /* Riesgo */
+  --color-risk-safe: #10b981;
+  --color-risk-review: #f59e0b;
+  --color-risk-no-touch: #ef4444;
 
-  /* Categórica (orden fijo, nunca cíclico) */
-  --color-cat-1: #2a78d6;
-  --color-cat-2: #eb6834;
-  --color-cat-3: #1baf7a;
-  --color-cat-4: #eda100;
-  --color-cat-5: #e87ba4;
-  --color-cat-6: #008300;
-  --color-cat-7: #6250d6;
-  --color-cat-8: #e34948;
+  /* Categórica */
+  --color-cat-1: #3b63f6;
+  --color-cat-2: #10b981;
+  --color-cat-3: #6366f1;
+  --color-cat-4: #f59e0b;
+  --color-cat-5: #06b6d4;
+  --color-cat-6: #ec4899;
+  --color-cat-7: #8b5cf6;
+  --color-cat-8: #ef4444;
 
-  --color-accent: #2a78d6;
+  --color-accent: #3b63f6;
+  --color-accent-soft: rgba(59, 99, 246, 0.12);
+  --color-accent-glow: rgba(59, 99, 246, 0.28);
+
+  --shadow-card: 0 10px 28px rgba(22, 34, 61, 0.07);
 
   /* Espaciado (base 4px) */
   --space-1: 4px;
@@ -46,36 +57,35 @@
   --space-7: 48px;
   --space-8: 64px;
 
-  /* Radios (concéntricos: exterior = interior + relleno) */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
+  --radius-sm: 10px;
+  --radius-md: 18px;
+  --radius-lg: 22px;
 
-  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", "Consolas", "Courier New", monospace;
 
-  --motion-duration-fast: 0.15s;
-  --motion-duration-normal: 0.3s;
+  --motion-duration-fast: 0.16s;
+  --motion-duration-normal: 0.32s;
   --motion-easing: cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:where(:not([data-theme="light"])) {
-    color-scheme: dark;
-    --color-bg: #020617;
-    --color-surface: #0e1223;
-    --color-text-primary: #f0efec;
-    --color-text-secondary: #c3c2b7;
-    --color-text-muted: #898781;
-    --color-border: #334155;
-  }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --color-bg: #020617;
-  --color-surface: #0e1223;
-  --color-text-primary: #f0efec;
-  --color-text-secondary: #c3c2b7;
-  --color-text-muted: #898781;
-  --color-border: #334155;
+  --color-bg: #182542;
+  --color-bg-gradient:
+    radial-gradient(ellipse 65% 55% at 10% 8%, rgba(59, 130, 246, 0.24) 0%, transparent 65%),
+    radial-gradient(ellipse 65% 55% at 90% 90%, rgba(99, 102, 241, 0.20) 0%, transparent 65%),
+    linear-gradient(135deg, #162340 0%, #1e3157 52%, #172747 100%);
+  --color-sidebar-bg: linear-gradient(180deg, #13203b 0%, #1a2c50 55%, #121e38 100%);
+  --color-topbar-bg: rgba(26, 42, 74, 0.86);
+  --color-surface: rgba(31, 49, 86, 0.86);
+  --color-surface-elevated: rgba(41, 63, 108, 0.90);
+  --color-text-primary: #f1f5ff;
+  --color-text-secondary: #bdd0f0;
+  --color-text-muted: #8ea6cf;
+  --color-border: rgba(147, 197, 253, 0.16);
+  --color-accent: #4f7cff;
+  --color-accent-soft: rgba(79, 124, 255, 0.20);
+  --color-accent-glow: rgba(79, 124, 255, 0.34);
+  --shadow-card: 0 12px 32px rgba(7, 15, 34, 0.30);
 }

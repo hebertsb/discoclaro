@@ -8,6 +8,7 @@ Steam…) y el dashboard los pide aparte, sin bloquear el resumen del disco.
 """
 
 import sqlite3
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,11 @@ class Summary:
     """El resumen de todos los discos, de mayor a menor tamaño total."""
 
     volumes: tuple[VolumeSummary, ...]
+
+
+# Caché corta para que el Resumen del dashboard responda al instante (<2 ms).
+SUMMARY_CACHE_TTL_S = 15.0
+_summary_cache: dict[str, tuple[float, Summary]] = {}
 
 
 def _volume_summary(
@@ -115,6 +121,17 @@ def run_summary(
     espacio real de ahora mismo y el resto de los campos en `None`: eso no es un
     error, es el estado normal de una instalación nueva.
     """
+    use_cache = (
+        data_dir is None
+        and list_volumes is volumes_service.run_volumes
+        and since == DEFAULT_SINCE
+    )
+    now_mono = time.monotonic()
+    if use_cache and "default" in _summary_cache:
+        cached_at, cached_summary = _summary_cache["default"]
+        if now_mono - cached_at < SUMMARY_CACHE_TTL_S:
+            return cached_summary
+
     directory = windows.default_data_dir() if data_dir is None else data_dir
     database = directory / DATABASE_NAME
     volumes = sorted(
@@ -131,4 +148,7 @@ def run_summary(
     except (OSError, sqlite3.Error, StoreError) as error:
         raise SummaryError("cannot_open_database", str(error)) from error
     with store:
-        return build_summary(volumes, store, since=since)
+        result = build_summary(volumes, store, since=since)
+    if use_cache:
+        _summary_cache["default"] = (now_mono, result)
+    return result

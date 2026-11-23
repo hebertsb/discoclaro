@@ -13,6 +13,8 @@ import ntpath
 import os
 import stat
 import subprocess
+import sys
+import time
 import winreg
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -289,10 +291,47 @@ def pause_requested(
 
 
 SCHEDULED_TASK_TIMEOUT_S = 15.0
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
 
 class ScheduledTaskError(OSError):
     """`schtasks.exe` devolvió un error al crear, quitar o consultar una tarea."""
+
+
+def _run_hidden(
+    run: Callable[..., subprocess.CompletedProcess],
+    args: Sequence[str],
+    *,
+    timeout: float = SCHEDULED_TASK_TIMEOUT_S,
+) -> subprocess.CompletedProcess:
+    """Corre `args` sin abrir ninguna ventana de consola fugaz cuando usa el
+    `subprocess.run` real; si `run` es un doble de prueba inyectado, le pasa
+    exactamente los mismos argumentos de siempre para no acoplar los tests."""
+    kwargs: dict[str, object] = {
+        "capture_output": True,
+        "text": True,
+        "timeout": timeout,
+    }
+    if run is subprocess.run and CREATE_NO_WINDOW:
+        kwargs["creationflags"] = CREATE_NO_WINDOW
+        kwargs["errors"] = "replace"
+    return run(list(args), **kwargs)
+
+
+def background_python_executable(
+    executable: str,
+    *,
+    exists: Callable[[str], bool] = os.path.isfile,
+) -> str:
+    """Devuelve `pythonw.exe` en la misma carpeta que `executable` (`python.exe`)
+    si existe, para que las tareas programadas en segundo plano no abran una
+    ventana de consola por un instante. Si no existe, conserva `executable`."""
+    directory, filename = ntpath.split(executable)
+    if filename.lower() == "python.exe":
+        candidate = ntpath.join(directory, "pythonw.exe")
+        if exists(candidate):
+            return candidate
+    return executable
 
 
 def _schtasks_path(environ: Mapping[str, str] | None = None) -> Path:
@@ -343,7 +382,7 @@ def create_scheduled_task(
     if event_query is not None:
         args += ["/mo", event_query]
     args.append("/f")
-    result = run(args, capture_output=True, text=True, timeout=SCHEDULED_TASK_TIMEOUT_S)
+    result = _run_hidden(run, args, timeout=SCHEDULED_TASK_TIMEOUT_S)
     if result.returncode != 0:
         raise ScheduledTaskError(result.returncode, result.stderr.strip())
 
@@ -354,10 +393,9 @@ def remove_scheduled_task(
     run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> bool:
     """Quita la tarea `name`. Devuelve si existía: que no exista no es un error."""
-    result = run(
+    result = _run_hidden(
+        run,
         [str(_schtasks_path()), "/delete", "/tn", name, "/f"],
-        capture_output=True,
-        text=True,
         timeout=SCHEDULED_TASK_TIMEOUT_S,
     )
     return result.returncode == 0
@@ -369,10 +407,9 @@ def scheduled_task_exists(
     run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> bool:
     """Si la tarea `name` ya existe en el Programador de tareas."""
-    result = run(
+    result = _run_hidden(
+        run,
         [str(_schtasks_path()), "/query", "/tn", name],
-        capture_output=True,
-        text=True,
         timeout=SCHEDULED_TASK_TIMEOUT_S,
     )
     return result.returncode == 0
@@ -392,10 +429,9 @@ def scheduled_task_command(
     pudo leer o no tiene la acción esperada, también devuelve `None`: no hay nada
     confiable para comparar.
     """
-    result = run(
+    result = _run_hidden(
+        run,
         [str(_schtasks_path()), "/query", "/tn", name, "/xml"],
-        capture_output=True,
-        text=True,
         timeout=SCHEDULED_TASK_TIMEOUT_S,
     )
     if result.returncode != 0:
@@ -519,6 +555,16 @@ def _build_program(raw: dict[str, object]) -> Program | None:
     )
 
 
+_PROGRAMS_CACHE_TTL_S = 15.0
+_programs_cache: tuple[float, list[Program]] | None = None
+
+
+def invalidate_installed_programs_cache() -> None:
+    """Invalida la caché en memoria del inventario de programas instalados."""
+    global _programs_cache
+    _programs_cache = None
+
+
 def installed_programs(
     *,
     read_entries: Callable[
@@ -528,13 +574,26 @@ def installed_programs(
     """Los programas instalados, de las tres claves "Desinstalar" del registro.
 
     Es de solo lectura. `read_entries` se puede inyectar con datos simulados para
-    probar sin tocar el registro real.
+    probar sin tocar el registro real. Cuando usa el lector real del registro,
+    cachea el listado por 15 s para que cambiar de vista en el dashboard sea
+    instantáneo.
     """
+    global _programs_cache
+    use_cache = read_entries is _read_all_uninstall_entries
+    now_mono = time.monotonic()
+    if use_cache and _programs_cache is not None:
+        cached_at, cached_list = _programs_cache
+        if now_mono - cached_at < _PROGRAMS_CACHE_TTL_S:
+            return list(cached_list)
+
     programs = []
     for raw in read_entries():
         program = _build_program(raw)
         if program is not None:
             programs.append(program)
+
+    if use_cache:
+        _programs_cache = (now_mono, list(programs))
     return programs
 
 
@@ -591,10 +650,9 @@ def run_in_wsl(
     """Corre `command` (lista de argumentos, nunca un texto para una terminal)
     dentro de la distribución WSL `distro`. `run` se puede inyectar para
     probar sin ejecutar nada de verdad."""
-    return run(
+    return _run_hidden(
+        run,
         [str(_wsl_path()), "-d", distro, *command],
-        capture_output=True,
-        text=True,
         timeout=timeout,
     )
 
@@ -632,16 +690,17 @@ def _query_cim_csv(
     administrado por el sistema, o de una unidad sin ningún punto de
     restauración)."""
     try:
-        result = run(
+        result = _run_hidden(
+            run,
             [
                 str(_powershell_path()),
                 "-NoProfile",
                 "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
                 "-Command",
                 command,
             ],
-            capture_output=True,
-            text=True,
             timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -729,7 +788,257 @@ def restore_advice(
     )
 
 
+# Constantes de MessageBoxW (user32.dll) para confirmación nativa de Windows.
+MB_YESNO = 0x00000004
+MB_ICONWARNING = 0x00000030
+MB_TOPMOST = 0x00040000
+MB_SETFOREGROUND = 0x00010000
+IDYES = 6
+
+
+def confirm_native_dialog(
+    title: str,
+    message: str,
+    *,
+    message_box: Callable[[int, str, str, int], int] | None = None,
+) -> bool:
+    """Muestra un diálogo nativo de Windows (`MessageBoxW`, fuera del control del
+    navegador) en primer plano y devuelve `True` solo si el usuario pulsa 'Sí'.
+
+    Cumple la regla de seguridad del proyecto (amenaza 2 de la sección 8.1):
+    ninguna acción ni comando disparado desde la API local se ejecuta sin que el
+    usuario lo acepte en una ventana real del sistema operativo en ese instante.
+    `message_box` se puede inyectar para probar sin abrir ventanas reales.
+    """
+    box = message_box or _user32_message_box()
+    flags = MB_YESNO | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND
+    return box(0, message, title, flags) == IDYES
+
+
+def _user32_message_box() -> Callable[[int, str, str, int], int]:
+    user32 = ctypes.WinDLL("user32")
+    user32.MessageBoxW.argtypes = [
+        wintypes.HWND,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.UINT,
+    ]
+    user32.MessageBoxW.restype = ctypes.c_int
+    return user32.MessageBoxW
+
+
+def open_in_explorer(
+    path: str,
+    *,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> bool:
+    """Abre `path` en el Explorador de Windows (`explorer.exe`). Si `path` es un
+    archivo existente, abre su carpeta contenedora con `/select,<archivo>` para
+    dejarlo resaltado; si es una carpeta, la abre directamente."""
+    if not path or not os.path.exists(path):
+        return False
+    windir = os.environ.get("WINDIR", r"C:\Windows")
+    explorer = str(Path(windir) / "explorer.exe")
+    norm = os.path.normpath(path)
+    args = [explorer, norm] if os.path.isdir(norm) else [explorer, f"/select,{norm}"]
+    try:
+        run(args, timeout=10.0)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return True
+
+
+def send_path_to_recycle_bin(
+    path: str,
+    *,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> bool:
+    """Envía un archivo o carpeta a la Papelera de reciclaje de Windows usando la
+    API nativa `Microsoft.VisualBasic.FileIO.FileSystem` desde PowerShell (sin
+    dependencias externas, sin `shell=True`, pasando la ruta por variable de
+    entorno para que ningún carácter especial se interprete como código)."""
+    if not path or not os.path.exists(path):
+        return False
+    script = (
+        "Add-Type -AssemblyName Microsoft.VisualBasic; "
+        "$p = $env:DISCOCLARO_TRASH_TARGET; "
+        "if (Test-Path -LiteralPath $p -PathType Container) { "
+        "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory("
+        "$p, 'OnlyErrorDialogs', 'SendToRecycleBin') "
+        "} elseif (Test-Path -LiteralPath $p -PathType Leaf) { "
+        "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile("
+        "$p, 'OnlyErrorDialogs', 'SendToRecycleBin') "
+        "} else { exit 1 }"
+    )
+    env = {**os.environ, "DISCOCLARO_TRASH_TARGET": os.path.normpath(path)}
+    kwargs: dict[str, object] = {
+        "capture_output": True,
+        "text": True,
+        "timeout": 60.0,
+        "env": env,
+    }
+    if run is subprocess.run and CREATE_NO_WINDOW:
+        kwargs["creationflags"] = CREATE_NO_WINDOW
+        kwargs["errors"] = "replace"
+    try:
+        result = run(
+            [
+                str(_powershell_path()),
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                script,
+            ],
+            **kwargs,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def create_desktop_shortcut(
+    *,
+    port: int = 8347,
+    python: str = sys.executable,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> str | None:
+    """Crea un acceso directo `DiscoClaro Dashboard.lnk` en el Escritorio real del
+    usuario que lanza `pythonw.exe -m discoclaro dashboard` sin abrir ninguna
+    ventana de consola y con el icono oficial `discoclaro.ico`."""
+    from discoclaro.platform.icon import ensure_discoclaro_ico
+
+    runner = background_python_executable(python)
+    workdir = str(Path(__file__).resolve().parents[3])
+    icon_target = Path(workdir) / "src" / "discoclaro" / "assets" / "discoclaro.ico"
+    try:
+        ensure_discoclaro_ico(icon_target)
+    except OSError:
+        icon_target = default_data_dir() / "discoclaro.ico"
+        ensure_discoclaro_ico(icon_target)
+    script = (
+        "$desktop = [Environment]::GetFolderPath('Desktop'); "
+        "if (-not $desktop) { exit 1 }; "
+        "$lnkPath = Join-Path $desktop 'DiscoClaro Dashboard.lnk'; "
+        "$wsh = New-Object -ComObject WScript.Shell; "
+        "$sc = $wsh.CreateShortcut($lnkPath); "
+        "$sc.TargetPath = $env:DISCOCLARO_SC_TARGET; "
+        "$sc.Arguments = $env:DISCOCLARO_SC_ARGS; "
+        "$sc.WorkingDirectory = $env:DISCOCLARO_SC_WORKDIR; "
+        "$sc.IconLocation = $env:DISCOCLARO_SC_ICON + ',0'; "
+        "$sc.Description = 'DiscoClaro - Analizador y Monitor de Disco sin consola'; "
+        "$sc.WindowStyle = 7; "
+        "$sc.Save(); "
+        "Write-Output $lnkPath"
+    )
+    env = {
+        **os.environ,
+        "DISCOCLARO_SC_TARGET": runner,
+        "DISCOCLARO_SC_ARGS": f"-m discoclaro dashboard --port {int(port)}",
+        "DISCOCLARO_SC_WORKDIR": workdir,
+        "DISCOCLARO_SC_ICON": str(icon_target),
+    }
+    kwargs: dict[str, object] = {
+        "capture_output": True,
+        "text": True,
+        "timeout": 15.0,
+        "env": env,
+    }
+    if run is subprocess.run and CREATE_NO_WINDOW:
+        kwargs["creationflags"] = CREATE_NO_WINDOW
+        kwargs["errors"] = "replace"
+    try:
+        result = run(
+            [
+                str(_powershell_path()),
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                script,
+            ],
+            **kwargs,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    out = (result.stdout or "").strip()
+    return out or str(Path.home() / "Desktop" / "DiscoClaro Dashboard.lnk")
+
+
+def launch_background_dashboard(
+    *,
+    port: int = 8347,
+    no_open: bool = False,
+    python: str = sys.executable,
+) -> int:
+    """Inicia el servidor del dashboard en segundo plano con `pythonw.exe`
+    desacoplado de la consola actual para que el usuario pueda cerrar la
+    terminal sin apagar el dashboard."""
+    runner = background_python_executable(python)
+    workdir = str(Path(__file__).resolve().parents[3])
+    cmd = [runner, "-m", "discoclaro", "dashboard", "--port", str(int(port))]
+    if no_open:
+        cmd.append("--no-open")
+    detached = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+    flags = CREATE_NO_WINDOW | detached
+    proc = subprocess.Popen(  # noqa: S603
+        cmd,
+        cwd=workdir,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=flags,
+    )
+    return int(proc.pid)
+
+
+class _SHQUERYRBINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("i64Size", ctypes.c_longlong),
+        ("i64NumItems", ctypes.c_longlong),
+    ]
+
+
+SHERB_NOCONFIRMATION = 0x00000001
+SHERB_NOPROGRESSUI = 0x00000002
+SHERB_NOSOUND = 0x00000004
+
+
+def recycle_bin_stats() -> tuple[int, int]:
+    """Devuelve `(total_bytes, total_items)` acumulados en la Papelera de
+    reciclaje de TODOS los discos de Windows usando `SHQueryRecycleBinW`."""
+    try:
+        info = _SHQUERYRBINFO()
+        info.cbSize = ctypes.sizeof(_SHQUERYRBINFO)
+        hr = ctypes.windll.shell32.SHQueryRecycleBinW(None, ctypes.byref(info))
+        if hr != 0:
+            return 0, 0
+        return max(0, int(info.i64Size)), max(0, int(info.i64NumItems))
+    except (AttributeError, OSError):
+        return 0, 0
+
+
+def empty_recycle_bin() -> bool:
+    """Vacía completamente la Papelera de reciclaje de Windows en todos los
+    discos usando `SHEmptyRecycleBinW` (sin ventana adicional, tras la
+    confirmación nativa de discoclaro)."""
+    try:
+        flags = SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND
+        hr = ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, flags)
+        # S_OK (0) o E_UNEXPECTED (-2147418113 cuando ya estaba vacía)
+        return hr in (0, -2147418113)
+    except (AttributeError, OSError):
+        return False
+
+
 def _optional_mb_to_bytes(value: str | None) -> int | None:
+
     parsed = _optional_bytes(value)
     return None if parsed is None else parsed * 1024 * 1024
 

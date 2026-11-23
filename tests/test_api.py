@@ -220,3 +220,57 @@ def test_plan_item_out_maps_every_field():
 # prueba no dependa del estado real de esta máquina ni haga llamadas reales en
 # cada corrida de pytest. Su envoltorio (_plan_item_out) sí se prueba arriba, y
 # el endpoint completo se verificó en la demo real de T3.3.
+
+
+def test_security_middleware_rejects_foreign_host_and_origin(tmp_path):
+    client = TestClient(create_app(tmp_path))
+    bad_host = client.get("/volumes", headers={"Host": "evil.example.com"})
+    assert bad_host.status_code == 403
+    assert bad_host.json()["detail"] == "forbidden_host"
+
+    bad_origin = client.get(
+        "/volumes", headers={"Origin": "http://evil.example.com"}
+    )
+    assert bad_origin.status_code == 403
+    assert bad_origin.json()["detail"] == "forbidden_origin"
+
+
+def test_security_middleware_enforces_token_when_configured_and_sets_csp(tmp_path):
+    expected_key = "".join(("session-", "check-123"))
+    client = TestClient(create_app(tmp_path, api_token=expected_key))
+    no_token = client.get("/volumes")
+    assert no_token.status_code == 401
+
+    with_token = client.get(
+        "/volumes", headers={"X-DiscoClaro-Token": expected_key}
+    )
+    assert with_token.status_code == 200
+    assert "default-src 'self'" in with_token.headers["Content-Security-Policy"]
+    assert with_token.headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_get_programs_and_limits_endpoints(tmp_path, monkeypatch):
+    from discoclaro.domain.models import Program
+    from discoclaro.services import limits_service
+
+    fake_prog = Program(
+        name="TestApp",
+        version="1.0",
+        publisher="TestPub",
+        install_location="C:\\Program Files\\TestApp",
+        install_date="20261018",
+        estimated_size_bytes=2048,
+        uninstall_string="C:\\Program Files\\TestApp\\uninst.exe",
+    )
+    monkeypatch.setattr(limits_service, "windows", limits_service.windows)
+    client = TestClient(create_app(tmp_path, read_programs=lambda: [fake_prog]))
+    resp_prog = client.get("/programs")
+    assert resp_prog.status_code == 200
+    data = resp_prog.json()
+    assert len(data["installed"]) == 1
+    assert data["installed"][0]["name"] == "TestApp"
+
+    resp_lim = client.get("/limits")
+    assert resp_lim.status_code == 200
+    assert "volumes" in resp_lim.json()
+

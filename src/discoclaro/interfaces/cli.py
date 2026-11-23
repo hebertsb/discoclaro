@@ -50,6 +50,7 @@ COMMANDS = (
     "schedule",
     "leftovers",
     "programs-check",
+    "dashboard",
 )
 EXIT_CANCELLED = 130
 PROGRESS_INTERVAL_S = 0.15
@@ -163,6 +164,29 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument(
                 "--json", action="store_true", help=t("cli.programs_check.json_help")
             )
+        elif name == "dashboard":
+            subparser.add_argument(
+                "--port",
+                type=int,
+                default=8347,
+                metavar="PORT",
+                help=t("cli.dashboard.port_help"),
+            )
+            subparser.add_argument(
+                "--no-open",
+                action="store_true",
+                help=t("cli.dashboard.no_open_help"),
+            )
+            subparser.add_argument(
+                "--background",
+                action="store_true",
+                help=t("cli.dashboard.background_help"),
+            )
+            subparser.add_argument(
+                "--shortcut",
+                action="store_true",
+                help=t("cli.dashboard.shortcut_help"),
+            )
     return parser
 
 
@@ -184,6 +208,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _leftovers(args.name, args.json)
     if args.command == "programs-check":
         return _programs_check(args.json)
+    if args.command == "dashboard":
+        return _dashboard(
+            args.port,
+            args.no_open,
+            background=getattr(args, "background", False),
+            shortcut=getattr(args, "shortcut", False),
+        )
     return 0
 
 
@@ -220,7 +251,7 @@ class _ProgressReporter:
         self._last = 0.0
 
     def on_progress(self, progress: ScanProgress) -> None:
-        if not sys.stdout.isatty():
+        if sys.stdout is None or not sys.stdout.isatty():
             return
         now = time.monotonic()
         if self._shown and now - self._last < PROGRESS_INTERVAL_S:
@@ -453,6 +484,35 @@ def _programs_check(as_json: bool) -> int:
     else:
         for line in _programs_check_lines(result):
             print(line)
+    return 0
+
+
+def _dashboard(
+    port: int,
+    no_open: bool,
+    *,
+    background: bool = False,
+    shortcut: bool = False,
+) -> int:
+    """Levanta el servidor local del dashboard en 127.0.0.1 (T3.8)."""
+    schedule_service.migrate_tasks_to_windowless()
+    if shortcut:
+        lnk = windows.create_desktop_shortcut(port=port)
+        if lnk:
+            print(f"Acceso directo creado: {lnk}")
+    from discoclaro.interfaces import api
+
+    url = f"http://{api.DEFAULT_HOST}:{port}"
+    if background:
+        pid = windows.launch_background_dashboard(port=port, no_open=no_open)
+        print(f"discoclaro dashboard (segundo plano, sin consola, PID {pid}) -> {url}")
+        return 0
+    print(f"discoclaro dashboard -> {url}")
+    if not no_open:
+        import webbrowser
+
+        webbrowser.open(url)
+    api.run_api_server(host=api.DEFAULT_HOST, port=port)
     return 0
 
 

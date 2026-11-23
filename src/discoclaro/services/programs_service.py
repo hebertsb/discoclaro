@@ -47,9 +47,13 @@ from discoclaro.platform import windows
 from discoclaro.services.scan_service import DATABASE_NAME
 
 # Dónde buscar, además de `install_location`: los mismos ejemplos reales de la
-# introducción de la Fase 2B (Ollama deja carpetas en estos tres lugares). Se
-# excluye `%TEMP%` a propósito: no es donde vive la huella de un programa.
-SEARCH_ROOT_VARIABLES = ("%LOCALAPPDATA%", "%APPDATA%", "%USERPROFILE%")
+# introducción de la Fase 2B (Ollama deja carpetas en estos tres lugares) más
+# `%TEMP%`, para encontrar también carpetas temporales del propio programa.
+SEARCH_ROOT_VARIABLES = ("%LOCALAPPDATA%", "%APPDATA%", "%USERPROFILE%", "%TEMP%")
+
+# Subcarpetas contenedoras dentro de `%LOCALAPPDATA%` o `%APPDATA%` donde viven
+# instalaciones por usuario (VS Code, Ollama, 7-Zip, Python) o datos agrupados.
+NESTED_PROGRAM_TAINERS = ("Programs",)
 
 
 class ProgramsCheckError(Exception):
@@ -92,8 +96,75 @@ class ProgramsCheckResult:
     uninstalled: tuple[UninstallLeftovers, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ProgramEntry:
+    """Un programa instalado, sus huellas conocidas y su tamaño total (T3.9)."""
+
+    program: Program
+    footprints: tuple[Footprint, ...]
+    total_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProgramsOverview:
+    """Vista completa para el dashboard (T3.9): instalados ordenados por tamaño
+    total (estimado o suma de huellas) y desinstalados que aún tienen restos."""
+
+    installed: tuple[ProgramEntry, ...]
+    uninstalled_with_leftovers: tuple[UninstallLeftovers, ...]
+
+
+def list_programs_overview(
+    data_dir: Path | None = None,
+    *,
+    read_programs: Callable[[], list[Program]] = windows.installed_programs,
+) -> ProgramsOverview:
+    """Lee los programas instalados actualmente en el sistema (con su
+    `uninstall_string` real del registro) y los cruza con las huellas y los
+    programas desinstalados guardados en la base (si existe)."""
+    current = read_programs()
+    footprints_by_name: dict[str, tuple[Footprint, ...]] = {}
+    removed_list: list[UninstallLeftovers] = []
+
+    directory = windows.default_data_dir() if data_dir is None else data_dir
+    database = directory / DATABASE_NAME
+    if database.is_file():
+        check_disk_exists = read_programs is windows.installed_programs
+        try:
+            with Store.open_readonly(database) as store:
+                footprints_by_name = store.all_program_footprints()
+                for rem in store.removed_programs():
+                    rem_footprints = footprints_by_name.get(rem.name, ())
+                    if check_disk_exists and rem_footprints:
+                        rem_footprints = tuple(
+                            f for f in rem_footprints if os.path.exists(f.path)
+                        )
+                    if rem_footprints:
+                        removed_list.append(
+                            UninstallLeftovers(program=rem, footprints=rem_footprints)
+                        )
+        except (OSError, sqlite3.Error, StoreError):
+            pass
+
+    entries: list[ProgramEntry] = []
+    for prog in current:
+        fps = footprints_by_name.get(prog.name, ())
+        footprint_sum = sum(f.size_bytes for f in fps)
+        estimated = prog.estimated_size_bytes or 0
+        total = max(estimated, footprint_sum)
+        entries.append(
+            ProgramEntry(program=prog, footprints=fps, total_bytes=total)
+        )
+    entries.sort(key=lambda e: (e.total_bytes, e.program.name.casefold()), reverse=True)
+    return ProgramsOverview(
+        installed=tuple(entries),
+        uninstalled_with_leftovers=tuple(removed_list),
+    )
+
+
 def _display(text: str) -> str:
     return limit_length(safe_text(text))
+
 
 
 def _top_level_folders(base: str) -> list[str]:
@@ -115,16 +186,37 @@ def _search_root_candidates(
     program: Program, environment: Mapping[str, str]
 ) -> list[str]:
     """Las carpetas de primer nivel de las ubicaciones típicas (`%LOCALAPPDATA%`,
-    `%APPDATA%`, `%USERPROFILE%`) cuyo nombre ya parece relacionado con `program`,
-    sin mirar todavía tamaño ni fecha (T2B.5/T2B.6/T2B.7)."""
-    paths = []
+    `%APPDATA%`, `%USERPROFILE%`, `%TEMP%`) más un segundo nivel dentro de
+    contenedores de programas (`%LOCALAPPDATA%\\Programs`) o de la carpeta del
+    propio editor (`%APPDATA%\\<Publisher>\\<Program>`), cuyo nombre ya parece
+    relacionado con `program`, sin mirar todavía tamaño ni fecha."""
+    paths: list[str] = []
+    seen: set[str] = set()
+
+    def _add(candidate: str) -> None:
+        key = candidate.rstrip("\\/").casefold()
+        if key not in seen:
+            seen.add(key)
+            paths.append(candidate)
+
+    publisher_key = (program.publisher or "").strip().casefold()
     for variable in SEARCH_ROOT_VARIABLES:
         base = environment.get(variable)
         if not base:
             continue
         for folder in _top_level_folders(base):
+            folder_name = os.path.basename(folder.rstrip("\\/"))
+            if folder_name in NESTED_PROGRAM_TAINERS:
+                for child in _top_level_folders(folder):
+                    if might_be_related(child, program):
+                        _add(child)
+                continue
             if might_be_related(folder, program):
-                paths.append(folder)
+                _add(folder)
+            if publisher_key and folder_name.casefold() == publisher_key:
+                for child in _top_level_folders(folder):
+                    if might_be_related(child, program):
+                        _add(child)
     return paths
 
 
@@ -342,3 +434,31 @@ def find_leftovers(
     ]
     found = footprints_of(program, candidates)
     return sorted(found, key=lambda footprint: footprint.size_bytes, reverse=True)
+
+
+def inspect_program_footprints(
+    program_name: str,
+    *,
+    read_programs: Callable[[], list[Program]] = windows.installed_programs,
+    environment: Callable[[], Mapping[str, str]] = windows.environment_variables,
+    inspect: Callable[[str], FolderCandidate | None] = inspect_folder,
+) -> list[Footprint]:
+    """Mide en vivo todas las carpetas (instalación, AppData, LocalAppData,
+    Programs, perfil y Temp) relacionadas con un programa instalado o por nombre."""
+    if not program_name:
+        raise ProgramsCheckError("leftovers_empty_name")
+    matched = next(
+        (p for p in read_programs() if p.name.casefold() == program_name.casefold()),
+        None,
+    )
+    if matched is None:
+        return find_leftovers(program_name, environment=environment, inspect=inspect)
+    env = environment()
+    candidates = [
+        candidate
+        for path in _candidate_paths(matched, env)
+        if (candidate := inspect(path)) is not None
+    ]
+    found = footprints_of(matched, candidates)
+    return sorted(found, key=lambda f: f.size_bytes, reverse=True)
+

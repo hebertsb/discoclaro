@@ -108,17 +108,18 @@ def install(
     Las cuatro corren como el usuario normal, sin pedir administrador.
     """
     name = _resolved_name(target, volumes)
-    programs_check = [python, "-m", "discoclaro", "programs-check"]
+    runner = windows.background_python_executable(python)
+    programs_check = [runner, "-m", "discoclaro", "programs-check"]
     try:
         create(
             SCAN_TASK_NAME,
-            [python, "-m", "discoclaro", "scan", name],
+            [runner, "-m", "discoclaro", "scan", name],
             schedule=DEFAULT_SCHEDULE,
             start_time=DEFAULT_START_TIME,
         )
         create(
             CHECK_TASK_NAME,
-            [python, "-m", "discoclaro", "check"],
+            [runner, "-m", "discoclaro", "check"],
             schedule=DEFAULT_SCHEDULE,
             start_time=DEFAULT_START_TIME,
         )
@@ -160,7 +161,12 @@ def _task_status(
     if found is None:
         return TaskStatus(installed=False)
     command, arguments = found
-    if command != python:
+    allowed_executables = {
+        python,
+        windows.background_python_executable(python),
+        windows.background_python_executable(python, exists=lambda _: True),
+    }
+    if command not in allowed_executables:
         return TaskStatus(installed=True, altered=True)
     if action in _FIXED_ARGUMENT_ACTIONS:
         matches = arguments == windows.command_line([*_MODULE_PREFIX, action])
@@ -197,3 +203,42 @@ def status(
             PROGRAMS_ONEVENT_TASK_NAME, "programs-check", python, get_command
         ),
     )
+
+
+def migrate_tasks_to_windowless(
+    *,
+    python: str = sys.executable,
+    get_command: Callable[
+        [str], tuple[str, str] | None
+    ] = windows.scheduled_task_command,
+    create: Callable[..., None] = windows.create_scheduled_task,
+) -> bool:
+    """Si las tareas programadas ya estaban instaladas con `python.exe` (que abre
+    una ventana de consola fugaz cada hora), las actualiza automáticamente a
+    `pythonw.exe` conservando el volumen o carpeta configurada en `scan`."""
+    runner = windows.background_python_executable(python)
+    if runner.lower().endswith("python.exe"):
+        return False
+    scan_cmd = get_command(SCAN_TASK_NAME)
+    hourly_cmd = get_command(PROGRAMS_HOURLY_TASK_NAME)
+    if scan_cmd is None and hourly_cmd is None:
+        return False
+    needs_migration = False
+    for cmd_tuple in (scan_cmd, hourly_cmd):
+        if cmd_tuple is not None and cmd_tuple[0].lower().endswith("python.exe"):
+            needs_migration = True
+            break
+    if not needs_migration:
+        return False
+
+    target = "C:"
+    if scan_cmd is not None:
+        _, args = scan_cmd
+        parts = args.split("scan ", 1)
+        if len(parts) == 2 and parts[1].strip():
+            target = parts[1].strip().strip('"')
+    try:
+        install(target, python=python, create=create)
+    except (ScheduleError, OSError):
+        return False
+    return True

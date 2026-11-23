@@ -34,20 +34,47 @@ class TreeView:
     children: tuple[Node, ...]
 
 
-def build_tree(path: str | None, snapshot_id: int | None, store: Store) -> TreeView:
-    """El nivel de `path` dentro de la foto `snapshot_id` (la más reciente de
-    cualquier destino, si falta). Lanza `TreeError` si no hay ninguna foto, si el
-    id no existe, o si `path` no es un nodo de esa foto."""
+def _pick_snapshot_for_volume(
+    snapshots: list[Snapshot], volume: str | None
+) -> Snapshot:
+    if volume is not None:
+        normalized = volume.rstrip("\\/").upper()
+        for snap in snapshots:
+            if snap.volume.rstrip("\\/").upper() == normalized:
+                return snap
+    volume_scans = [s for s in snapshots if s.is_volume_scan]
+    return volume_scans[0] if volume_scans else snapshots[0]
+
+
+def build_tree(
+    path: str | None,
+    snapshot_id: int | None,
+    store: Store,
+    *,
+    volume: str | None = None,
+) -> TreeView:
+    """El nivel de `path` dentro de la foto `snapshot_id` (o la más reciente de
+    `volume`, o de un disco completo si ambos faltan)."""
     if snapshot_id is None:
         snapshots = store.snapshots()
         if not snapshots:
             raise TreeError("tree_no_snapshots")
-        snapshot = snapshots[0]
+        snapshot = _pick_snapshot_for_volume(snapshots, volume)
     else:
         found = store.get_snapshot(snapshot_id)
         if found is None:
             raise TreeError("tree_no_such_snapshot", str(snapshot_id))
         snapshot = found
+
+    if hasattr(store, "children_nodes") and hasattr(store, "node_at_path"):
+        node = None
+        if path is not None:
+            node = store.node_at_path(snapshot.id, path)
+            if node is None:
+                raise TreeError("tree_no_such_path", path)
+        children = tuple(store.children_nodes(snapshot.id, path))
+        return TreeView(snapshot=snapshot, node=node, children=children)
+
     nodes = store.nodes(snapshot.id)
     node = None
     if path is not None:
@@ -61,12 +88,10 @@ def run_tree(
     path: str | None,
     snapshot_id: int | None = None,
     data_dir: Path | None = None,
+    *,
+    volume: str | None = None,
 ) -> TreeView:
-    """Arma el árbol leyendo la base propia de discoclaro, sin volver a escanear.
-
-    La base vive en `%LOCALAPPDATA%\\discoclaro`, o en `data_dir` si se da (para
-    probar).
-    """
+    """Arma el árbol leyendo la base propia de discoclaro, sin volver a escanear."""
     directory = windows.default_data_dir() if data_dir is None else data_dir
     database = directory / DATABASE_NAME
     if not database.is_file():
@@ -76,4 +101,4 @@ def run_tree(
     except (OSError, sqlite3.Error, StoreError) as error:
         raise TreeError("cannot_open_database", str(error)) from error
     with store:
-        return build_tree(path, snapshot_id, store)
+        return build_tree(path, snapshot_id, store, volume=volume)

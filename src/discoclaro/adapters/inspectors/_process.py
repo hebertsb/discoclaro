@@ -11,6 +11,7 @@ intenta adivinar con una salida a medias.
 
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable, Sequence
 
 TIMEOUT_S = 15.0
@@ -19,6 +20,10 @@ TIMEOUT_S = 15.0
 # modelos, cachés, tablas de espacio). Un múltiplo generoso de eso basta para
 # aceptar cualquier salida real y rechazar una que se desbocó.
 MAX_OUTPUT_BYTES = 1_000_000
+
+_NO_WINDOW_FLAGS = (
+    getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+)
 
 
 def run_command(
@@ -31,13 +36,16 @@ def run_command(
     ejecutable, ya resuelta por quien llama. `run` se puede inyectar para
     probar sin ejecutar nada de verdad."""
     try:
-        result = run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUT_S,
-            errors="replace",
-        )
+        kwargs: dict[str, object] = {
+            "capture_output": True,
+            "text": True,
+            "timeout": TIMEOUT_S,
+            "errors": "replace",
+        }
+        if _NO_WINDOW_FLAGS and run is subprocess.run:
+            kwargs["creationflags"] = _NO_WINDOW_FLAGS
+            kwargs["stdin"] = subprocess.DEVNULL
+        result = run(command, **kwargs)
     except (OSError, subprocess.TimeoutExpired):
         return None
     if result.returncode != 0:
@@ -50,8 +58,38 @@ def run_command(
 def resolve_executable(
     name: str, *, which: Callable[[str], str | None] = shutil.which
 ) -> str | None:
-    """La ruta completa de `name` en el `PATH` de ahora, o `None` si no está.
-    Se resuelve una sola vez, antes de armar el comando: nunca se le pasa el
-    nombre suelto a `run_command`, para no depender de que el `PATH` siga
-    siendo el mismo entre que se resuelve y que se ejecuta."""
-    return which(name)
+    """La ruta completa de `name` en el `PATH` de ahora (o en rutas estándar de
+    instalación en Windows si no está en el PATH del proceso en segundo plano),
+    o `None` si no está."""
+    found = which(name)
+    if found is not None:
+        return found
+    if which is not shutil.which or sys.platform != "win32":
+        return None
+    import os
+    from pathlib import Path
+
+    low = name.lower()
+    local_app = os.environ.get("LOCALAPPDATA", "")
+    user_prof = os.environ.get("USERPROFILE", "")
+    venv_scripts = Path(sys.executable).parent
+    candidates: list[Path] = [
+        venv_scripts / f"{low}.exe",
+        venv_scripts / f"{low}.cmd",
+    ]
+    if low == "ollama" and local_app:
+        candidates.append(Path(local_app) / "Programs" / "Ollama" / "ollama.exe")
+    elif low == "uv" and user_prof:
+        candidates.append(Path(user_prof) / ".local" / "bin" / "uv.exe")
+        if local_app:
+            candidates.append(Path(local_app) / "uv" / "uv.exe")
+    elif low == "npm":
+        candidates.append(Path(r"C:\Program Files\nodejs\npm.cmd"))
+    elif low == "docker":
+        candidates.append(
+            Path(r"C:\Program Files\Docker\Docker\resources\bin\docker.exe")
+        )
+    for cand in candidates:
+        if cand.is_file():
+            return str(cand)
+    return None

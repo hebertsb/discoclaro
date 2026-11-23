@@ -12,6 +12,7 @@ check = "Evalúa los avisos configurados y notifica los que correspondan."
 schedule = "Instala, quita o consulta la tarea programada que escanea y revisa avisos."
 leftovers = "Busca restos de un programa ya desinstalado, solo por nombre."
 programs-check = "Revisa el inventario de programas instalados y avisa qué cambió."
+dashboard = "Levanta el panel web local y la API en 127.0.0.1."
 
 [cli.scan]
 target_name = "DESTINO"
@@ -52,6 +53,12 @@ json_help = "Muestra el resultado en JSON en vez de en una tabla."
 
 [cli.programs_check]
 json_help = "Muestra el resultado en JSON en vez de en una tabla."
+
+[cli.dashboard]
+port_help = "Puerto local en 127.0.0.1 (8347 por defecto)."
+no_open_help = "No abre el navegador automáticamente al arrancar."
+background_help = "Lanza el servidor en segundo plano con pythonw.exe (sin ventana de consola) y libera la terminal."
+shortcut_help = "Crea un acceso directo en el Escritorio que abre el Dashboard sin ventana de consola."
 
 [format]
 decimal_separator = ","

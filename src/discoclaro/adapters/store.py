@@ -224,11 +224,65 @@ _SELECT_NODES = """
     ORDER BY path, rowid
 """
 
+_SELECT_NODE_AT_PATH = """
+    SELECT path, parent_path, size_bytes, n_files, depth, rule_id
+    FROM nodes
+    WHERE snapshot_id = ? AND path = ?
+    ORDER BY rowid
+    LIMIT 1
+"""
+
+_SELECT_ROOT_NODES = """
+    SELECT path, parent_path, size_bytes, n_files, depth, rule_id
+    FROM nodes
+    WHERE snapshot_id = ? AND depth = 0
+    ORDER BY size_bytes DESC, path
+"""
+
+_SELECT_CHILD_NODES = """
+    SELECT path, parent_path, size_bytes, n_files, depth, rule_id
+    FROM nodes
+    WHERE snapshot_id = ? AND parent_path = ?
+    ORDER BY size_bytes DESC, path
+"""
+
 _SELECT_LARGE_FILES = """
     SELECT path, size_bytes
     FROM large_files
     WHERE snapshot_id = ?
     ORDER BY path, rowid
+"""
+
+_SELECT_NODES_MATCHING = """
+    SELECT path, parent_path, size_bytes, n_files, depth, rule_id
+    FROM nodes
+    WHERE snapshot_id = ? AND path LIKE ?
+    ORDER BY size_bytes DESC, path
+    LIMIT ?
+"""
+
+_SELECT_TOP_NODES = """
+    SELECT path, parent_path, size_bytes, n_files, depth, rule_id
+    FROM nodes
+    WHERE snapshot_id = ? AND depth > 0
+    ORDER BY size_bytes DESC, path
+    LIMIT ?
+"""
+
+_SELECT_TOP_LARGE_FILES = """
+    SELECT path, size_bytes
+    FROM large_files
+    WHERE snapshot_id = ?
+    ORDER BY size_bytes DESC, path
+    LIMIT ?
+"""
+
+_SELECT_LARGE_FILES_MATCHING = """
+    SELECT path, size_bytes
+    FROM large_files
+    WHERE snapshot_id = ? AND path LIKE ?
+    ORDER BY size_bytes DESC, path
+    LIMIT ?
 """
 
 _SELECT_ALERT = "SELECT fired_at FROM alerts WHERE kind = ? AND target = ?"
@@ -274,6 +328,14 @@ _SELECT_ACTIVE_PROGRAMS = """
     ORDER BY name
 """
 
+_SELECT_REMOVED_PROGRAMS = """
+    SELECT name, version, publisher, install_location, install_date,
+           estimated_size_bytes
+    FROM programs
+    WHERE removed_at IS NOT NULL
+    ORDER BY removed_at DESC, name
+"""
+
 _MARK_ALL_REMOVED = "UPDATE programs SET removed_at = ? WHERE removed_at IS NULL"
 
 _INSERT_FOOTPRINT = """
@@ -290,6 +352,13 @@ _SELECT_FOOTPRINTS_OF_PROGRAM = """
     JOIN programs p ON p.id = f.program_id
     WHERE p.name = ?
     ORDER BY f.path
+"""
+
+_SELECT_ALL_FOOTPRINTS = """
+    SELECT p.name, f.path, f.size_bytes, f.confidence, f.reason
+    FROM program_footprints f
+    JOIN programs p ON p.id = f.program_id
+    ORDER BY p.name, f.path
 """
 
 _DELETE_SNAPSHOT = "DELETE FROM snapshots WHERE id = ?"
@@ -443,9 +512,96 @@ class Store:
             for path, parent_path, size_bytes, n_files, depth, rule_id in rows
         ]
 
+    def node_at_path(self, snapshot_id: int, path: str) -> Node | None:
+        """Una sola carpeta por su ruta exacta dentro de `snapshot_id`, usando el
+        índice `nodes_by_path` sin cargar los decenas de miles de nodos de la foto."""
+        row = self._connection.execute(
+            _SELECT_NODE_AT_PATH, (snapshot_id, _clean(path))
+        ).fetchone()
+        if row is None:
+            return None
+        p, parent_path, size_bytes, n_files, depth, rule_id = row
+        return Node(
+            path=p,
+            parent_path=parent_path,
+            size_bytes=size_bytes,
+            n_files=n_files,
+            depth=depth,
+            rule_id=rule_id,
+        )
+
+    def children_nodes(self, snapshot_id: int, parent_path: str | None) -> list[Node]:
+        """Los hijos directos de `parent_path` (o las raíces `depth = 0` si es `None`),
+        ordenados de mayor a menor tamaño directamente en SQLite."""
+        if parent_path is None:
+            rows = self._connection.execute(
+                _SELECT_ROOT_NODES, (snapshot_id,)
+            ).fetchall()
+        else:
+            rows = self._connection.execute(
+                _SELECT_CHILD_NODES, (snapshot_id, _clean(parent_path))
+            ).fetchall()
+        return [
+            Node(
+                path=p,
+                parent_path=parent,
+                size_bytes=size_bytes,
+                n_files=n_files,
+                depth=depth,
+                rule_id=rule_id,
+            )
+            for p, parent, size_bytes, n_files, depth, rule_id in rows
+        ]
+
     def large_files(self, snapshot_id: int) -> list[LargeFile]:
         """Los archivos grandes de una foto, ordenados por ruta; vacío si no hay."""
         rows = self._connection.execute(_SELECT_LARGE_FILES, (snapshot_id,)).fetchall()
+        return [
+            LargeFile(path=path, size_bytes=size_bytes) for path, size_bytes in rows
+        ]
+
+    def search_nodes(
+        self, snapshot_id: int, query: str = "", limit: int = 100
+    ) -> list[Node]:
+        """Busca carpetas en `snapshot_id` por texto (`query`) o devuelve las más
+        grandes si `query` está vacío, directo desde SQLite con `LIMIT`."""
+        cleaned = _clean(query.strip())
+        if not cleaned:
+            rows = self._connection.execute(
+                _SELECT_TOP_NODES, (snapshot_id, limit)
+            ).fetchall()
+        else:
+            pattern = f"%{cleaned}%"
+            rows = self._connection.execute(
+                _SELECT_NODES_MATCHING, (snapshot_id, pattern, limit)
+            ).fetchall()
+        return [
+            Node(
+                path=path,
+                parent_path=parent_path,
+                size_bytes=size_bytes,
+                n_files=n_files,
+                depth=depth,
+                rule_id=rule_id,
+            )
+            for path, parent_path, size_bytes, n_files, depth, rule_id in rows
+        ]
+
+    def search_large_files(
+        self, snapshot_id: int, query: str = "", limit: int = 100
+    ) -> list[LargeFile]:
+        """Busca archivos grandes (>= 50 MiB) en `snapshot_id` por texto o devuelve
+        los más grandes de mayor a menor tamaño."""
+        cleaned = _clean(query.strip())
+        if not cleaned:
+            rows = self._connection.execute(
+                _SELECT_TOP_LARGE_FILES, (snapshot_id, limit)
+            ).fetchall()
+        else:
+            pattern = f"%{cleaned}%"
+            rows = self._connection.execute(
+                _SELECT_LARGE_FILES_MATCHING, (snapshot_id, pattern, limit)
+            ).fetchall()
         return [
             LargeFile(path=path, size_bytes=size_bytes) for path, size_bytes in rows
         ]
@@ -544,6 +700,30 @@ class Store:
             ) in rows
         ]
 
+    def removed_programs(self) -> list[Program]:
+        """Los programas que alguna vez se registraron y ya están marcados como
+        desinstalados (`removed_at` no vacío), del más reciente al más viejo."""
+        rows = self._connection.execute(_SELECT_REMOVED_PROGRAMS).fetchall()
+        return [
+            Program(
+                name=name,
+                version=version,
+                publisher=publisher,
+                install_location=install_location,
+                install_date=install_date,
+                estimated_size_bytes=estimated_size_bytes,
+                uninstall_string=None,
+            )
+            for (
+                name,
+                version,
+                publisher,
+                install_location,
+                install_date,
+                estimated_size_bytes,
+            ) in rows
+        ]
+
     def save_footprints(
         self, program_name: str, footprints: Iterable[Footprint], recorded_at: datetime
     ) -> None:
@@ -601,6 +781,22 @@ class Store:
             )
             for path, size_bytes, confidence, reason in rows
         ]
+
+    def all_program_footprints(self) -> dict[str, tuple[Footprint, ...]]:
+        """Todas las huellas guardadas de todos los programas en una sola consulta."""
+        rows = self._connection.execute(_SELECT_ALL_FOOTPRINTS).fetchall()
+        grouped: dict[str, list[Footprint]] = {}
+        for name, path, size_bytes, confidence, reason in rows:
+            grouped.setdefault(name, []).append(
+                Footprint(
+                    path=path,
+                    size_bytes=size_bytes,
+                    last_modified=None,
+                    confidence=confidence,
+                    reason=reason,
+                )
+            )
+        return {name: tuple(items) for name, items in grouped.items()}
 
     def save_decision(
         self, target: str, status: str, note: str | None, decided_at: datetime

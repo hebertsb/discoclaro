@@ -12,6 +12,7 @@ check = "Evaluates the configured alerts and notifies the ones that apply."
 schedule = "Installs, removes or checks the scheduled task that scans and checks alerts."
 leftovers = "Looks for leftovers of an already uninstalled program, by name only."
 programs-check = "Checks the installed programs inventory and notifies what changed."
+dashboard = "Starts the local web dashboard and API on 127.0.0.1."
 
 [cli.scan]
 target_name = "TARGET"
@@ -52,6 +53,12 @@ json_help = "Show the result as JSON instead of a table."
 
 [cli.programs_check]
 json_help = "Show the result as JSON instead of a table."
+
+[cli.dashboard]
+port_help = "Local port on 127.0.0.1 (8347 by default)."
+no_open_help = "Do not open the browser automatically on startup."
+background_help = "Starts the server in the background with pythonw.exe (no console window) and frees the terminal."
+shortcut_help = "Creates a Desktop shortcut that opens the Dashboard without a console window."
 
 [format]
 decimal_separator = "."

@@ -15,6 +15,20 @@ const API_PATHS = [
   "/growth",
   "/summary",
   "/plan",
+  "/recommendations",
+  "/programs",
+  "/leftovers",
+  "/limits",
+  "/actions",
+  "/search",
+  "/duplicates",
+  "/schedule",
+  "/dev-projects",
+  "/vhdx",
+  "/history",
+  "/migration-assistant",
+  "/recycle-bin",
+  "/disk-health",
 ];
 
 export default defineConfig({

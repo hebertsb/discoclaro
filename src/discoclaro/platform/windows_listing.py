@@ -15,6 +15,7 @@ import errno
 import functools
 import stat
 import struct
+import threading
 from collections.abc import Callable, Iterator
 from ctypes import wintypes
 
@@ -186,8 +187,15 @@ def _load_api() -> object:
     return kernel32
 
 
-@functools.cache
+_thread_local = threading.local()
+
+
 def _listing_buffer() -> tuple[ctypes.Array[ctypes.c_char], memoryview]:
-    """El bloque de memoria que reutiliza cada lista, para no pedir uno por carpeta."""
-    buffer = ctypes.create_string_buffer(BUFFER_BYTES)
-    return buffer, memoryview(buffer).cast("B")
+    """El bloque de memoria que reutiliza cada lista por hilo (`threading.local`),
+    para no pedir uno por carpeta ni pisarse entre hilos en paralelo."""
+    pair = getattr(_thread_local, "buffer_pair", None)
+    if pair is None:
+        buffer = ctypes.create_string_buffer(BUFFER_BYTES)
+        pair = (buffer, memoryview(buffer).cast("B"))
+        _thread_local.buffer_pair = pair
+    return pair

@@ -127,6 +127,56 @@ def inspect(
     return Insight(program="steam", items=items)
 
 
+def game_details(
+    game_name: str,
+    *,
+    steam_path: Callable[[], str | None] = windows.steam_install_path,
+    read_text: Callable[[str], str | None] = _read_text,
+    list_appmanifests: Callable[[str], list[str]] = _list_appmanifests,
+) -> tuple[str | None, str | None, str | None]:
+    """Devuelve `(carpeta_exacta_del_juego, unidad_actual, biblioteca_destino_sugerida)`
+    leyendo `libraryfolders.vdf` y el `appmanifest_*.acf` real del juego."""
+    base = steam_path()
+    if base is None:
+        return None, None, None
+    libraries = _library_paths(base, read_text)
+    target_low = game_name.strip().lower()
+    game_dir: str | None = None
+    game_drive: str | None = None
+    game_library: str | None = None
+
+    for library in libraries:
+        for manifest_path in list_appmanifests(library):
+            content = read_text(manifest_path)
+            if content is None:
+                continue
+            names = _vdf_values(content, "name")
+            if not names or names[0].strip().lower() != target_low:
+                continue
+            installdirs = _vdf_values(content, "installdir")
+            common = os.path.join(library, "steamapps", "common")
+            game_dir = (
+                os.path.join(common, installdirs[0]) if installdirs else common
+            )
+            game_library = library
+            game_drive = os.path.splitdrive(library)[0].upper() or None
+            break
+        if game_dir is not None:
+            break
+
+    other_library: str | None = None
+    if game_drive is not None:
+        for lib in libraries:
+            lib_drive = os.path.splitdrive(lib)[0].upper()
+            if lib_drive and lib_drive != game_drive:
+                other_library = os.path.join(lib, "steamapps", "common")
+                break
+        if other_library is None and game_library is not None:
+            other_library = None
+
+    return game_dir, game_drive, other_library
+
+
 def misplaced_games(
     *,
     games: Callable[[], list[SteamGame]] = installed_games,
