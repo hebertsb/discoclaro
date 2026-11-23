@@ -59,17 +59,31 @@ const QUICK_COMMANDS: { label: string; command: string; note: string }[] = [
 ];
 
 export default function TerminalView({
-  initialCommand = "",
+  pendingRequest = null,
+  onConsumedRequest,
 }: {
-  initialCommand?: string;
+  pendingRequest?: { command: string; autoRun: boolean; id: number } | null;
+  onConsumedRequest?: () => void;
 }) {
   const [volumes, setVolumes] = useState<VolumeSummaryOut[]>([]);
   const [cwd, setCwd] = useState("C:\\");
-  const [command, setCommand] = useState(initialCommand);
+  const [command, setCommand] = useState(pendingRequest?.command ?? "");
   const [running, setRunning] = useState(false);
+  const [elapsedSec, setElapsedSec] = useState(0);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [cmdHistory, setCmdHistory] = useState<string[]>([]);
   const [cmdCursor, setCmdCursor] = useState<number>(-1);
+
+  useEffect(() => {
+    if (!running) {
+      setElapsedSec(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setElapsedSec((prev) => prev + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
 
   useEffect(() => {
     fetchSummary()
@@ -78,10 +92,16 @@ export default function TerminalView({
   }, []);
 
   useEffect(() => {
-    if (initialCommand) {
-      setCommand(initialCommand);
+    if (!pendingRequest) return;
+    const cmd = pendingRequest.command;
+    const shouldRun = pendingRequest.autoRun;
+    setCommand(cmd);
+    onConsumedRequest?.();
+    if (shouldRun && cmd.trim()) {
+      void handleExecute(cmd);
     }
-  }, [initialCommand]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingRequest?.id]);
 
   async function handleSwitchDrive(driveName: string) {
     const root = driveName.endsWith("\\") ? driveName : `${driveName}\\`;
@@ -144,6 +164,9 @@ export default function TerminalView({
           item.id === entryId ? { ...item, status: "done", result: output } : item,
         ),
       );
+      fetchSummary()
+        .then((s) => setVolumes(s.volumes))
+        .catch(() => {});
     } catch (error: unknown) {
       const detail =
         error instanceof ApiError
@@ -319,7 +342,7 @@ export default function TerminalView({
               className="term-btn term-btn--primary"
               disabled={running || !command.trim()}
             >
-              {running ? "Esperando confirmación…" : "Ejecutar"}
+              {running ? `Ejecutando… (${elapsedSec}s)` : "Ejecutar"}
             </button>
           </form>
 
@@ -348,7 +371,10 @@ export default function TerminalView({
                   </div>
                   {entry.status === "running" && (
                     <div style={{ color: "#fbbf24" }}>
-                      Esperando confirmación en la ventana nativa de Windows…
+                      ⏳ Confirmación nativa / Ejecutando comando en vivo ({elapsedSec} s)…{" "}
+                      <span style={{ color: "#94a3b8", fontSize: 12 }}>
+                        (comandos pesados como uv o docker pueden tardar 1–2 min en borrar miles de archivos)
+                      </span>
                     </div>
                   )}
                   {entry.status === "error" && (

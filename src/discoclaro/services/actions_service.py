@@ -36,7 +36,7 @@ from discoclaro.domain.policy import is_safe_deletion_path, limit_length
 from discoclaro.platform import windows
 from discoclaro.services import programs_service
 
-TERMINAL_TIMEOUT_S = 60.0
+TERMINAL_TIMEOUT_S = 300.0
 UNINSTALL_TIMEOUT_S = 300.0
 
 
@@ -657,7 +657,7 @@ def clean_safe_batch(
 
     from discoclaro.services import history_service, plan_service, summary_service
 
-    plan_service._plan_cache = {}
+    plan_service.invalidate_plan_cache(data_dir)
     summary_service._summary_cache.clear()
     total_freed_batch = sum(i.estimated_bytes for i in results)
     if total_freed_batch > 0:
@@ -724,70 +724,160 @@ def compact_vhdx_assisted(
     if run is subprocess.run and windows.CREATE_NO_WINDOW:
         kwargs["creationflags"] = windows.CREATE_NO_WINDOW
 
-    # 1. Apagar WSL2 para liberar el bloqueo del archivo .vhdx
+    # 1. Si el .vhdx es de Docker Desktop, detener Docker primero para que no
+    # vuelva a montar ni bloquee el archivo tras `wsl --shutdown`.
+    import tempfile
+    import time
+
     windir = os.environ.get("WINDIR", r"C:\Windows")
     wsl_exe = str(Path(windir) / "System32" / "wsl.exe")
+    # 0. Antes de apagar WSL, ejecutar fstrim dentro de la distro para marcar
+    # los bloques libres de ext4 como vacíos (sin fstrim, diskpart no puede
+    # encoger espacio borrado en Docker/WSL2).
+    if os.path.isfile(wsl_exe):
+        distro = "docker-desktop" if "docker" in cleaned.lower() else None
+        trim_cmd = (
+            [wsl_exe, "-d", distro, "-u", "root", "--", "fstrim", "-av"]
+            if distro
+            else [wsl_exe, "-u", "root", "--", "fstrim", "-av"]
+        )
+        try:
+            run(trim_cmd, **kwargs)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    taskkill_exe = str(Path(windir) / "System32" / "taskkill.exe")
+    if "docker" in cleaned.lower() and os.path.isfile(taskkill_exe):
+        for proc_name in ("Docker Desktop.exe", "com.docker.backend.exe"):
+            try:
+                run([taskkill_exe, "/IM", proc_name, "/F"], **kwargs)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
     if os.path.isfile(wsl_exe):
         try:
             run([wsl_exe, "--shutdown"], **kwargs)
         except (OSError, subprocess.TimeoutExpired):
             pass
 
-    # 2. Compactar con Optimize-VHD (Hyper-V) o fallback a diskpart sin shell=True
-    ps_exe = str(
-        Path(windir)
-        / "System32"
-        / "WindowsPowerShell"
-        / "v1.0"
-        / "powershell.exe"
-    )
-    script = (
-        "$p = $env:DISCOCLARO_VHDX_PATH; "
-        "if (Get-Command Optimize-VHD -ErrorAction SilentlyContinue) { "
-        "Optimize-VHD -Path $p -Mode Full; exit 0 "
-        "} else { "
-        "$tmp = [System.IO.Path]::GetTempFileName(); "
-        "$lines = @(\"select vdisk file=`\"$p`\"\", \"attach vdisk readonly\", "
-        "\"compact vdisk\", \"detach vdisk\", \"exit\"); "
-        "Set-Content -Path $tmp -Value $lines -Encoding ASCII; "
-        "$proc = Start-Process -FilePath diskpart.exe -ArgumentList \"/s `\"$tmp`\"\" "
-        "-Verb RunAs -Wait -PassThru -WindowStyle Hidden; "
-        "Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue; "
-        "exit $proc.ExitCode }"
-    )
-    env = {**os.environ, "DISCOCLARO_VHDX_PATH": cleaned}
+    if run is subprocess.run:
+        time.sleep(2.5)
+
+    # 2. Compactar con diskpart elevado (ShellExecuteExW "runas") capturando el
+    # log real para nunca reportar falso éxito si el archivo estaba bloqueado o
+    # el usuario canceló UAC.
     ok = False
     detail = "ok"
+    tmp_dir = Path(tempfile.gettempdir())
+    dp_script = tmp_dir / f"discoclaro_dp_{os.getpid()}.txt"
+    dp_log = tmp_dir / f"discoclaro_dp_{os.getpid()}.log"
+    dp_bat = tmp_dir / f"discoclaro_dp_{os.getpid()}.bat"
     try:
-        completed = run(
-            [
-                ps_exe,
-                "-NoProfile",
-                "-NonInteractive",
-                "-WindowStyle",
-                "Hidden",
-                "-Command",
-                script,
-            ],
-            env=env,
-            **kwargs,
+        dp_script.write_text(
+            f'select vdisk file="{cleaned}"\r\n'
+            "attach vdisk readonly\r\n"
+            "compact vdisk\r\n"
+            "detach vdisk\r\n"
+            "exit\r\n",
+            encoding="ascii",
+            errors="replace",
         )
-        ok = completed.returncode == 0
-        if not ok:
-            raw_err = (
-                completed.stderr
-                or completed.stdout
-                or f"exit={completed.returncode}"
-            )
-            detail = raw_err.strip()[:240]
+        dp_bat.write_text(
+            f'@echo off\r\ndiskpart.exe /s "{dp_script}" > "{dp_log}" 2>&1\r\n',
+            encoding="ascii",
+            errors="replace",
+        )
+        if run is not subprocess.run:
+            # Ruta testable con `run` inyectado
+            completed = run([str(dp_bat)], **kwargs)
+            ok = completed.returncode == 0
+        else:
+            import ctypes
+            from ctypes import wintypes
+
+            class _SHELLEXECUTEINFOW(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.DWORD),
+                    ("fMask", wintypes.ULONG),
+                    ("hwnd", wintypes.HWND),
+                    ("lpVerb", wintypes.LPCWSTR),
+                    ("lpFile", wintypes.LPCWSTR),
+                    ("lpParameters", wintypes.LPCWSTR),
+                    ("lpDirectory", wintypes.LPCWSTR),
+                    ("nShow", ctypes.c_int),
+                    ("hInstApp", wintypes.HINSTANCE),
+                    ("lpIDList", ctypes.c_void_p),
+                    ("lpClass", wintypes.LPCWSTR),
+                    ("hkeyClass", wintypes.HKEY),
+                    ("dwHotKey", wintypes.DWORD),
+                    ("hIcon", wintypes.HANDLE),
+                    ("hProcess", wintypes.HANDLE),
+                ]
+
+            cmd_exe = str(Path(windir) / "System32" / "cmd.exe")
+            sei = _SHELLEXECUTEINFOW()
+            sei.cbSize = ctypes.sizeof(_SHELLEXECUTEINFOW)
+            sei.fMask = 0x00000040  # SEE_MASK_NOCLOSEPROCESS
+            sei.lpVerb = "runas"
+            sei.lpFile = cmd_exe
+            sei.lpParameters = f'/c "{dp_bat}"'
+            sei.nShow = 0  # SW_HIDE
+            launched = ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(sei))
+            if not launched:
+                detail = (
+                    "Permiso de Administrador (UAC) cancelado o denegado por Windows."
+                )
+            else:
+                if sei.hProcess:
+                    ctypes.windll.kernel32.WaitForSingleObject(sei.hProcess, 180_000)
+                    ctypes.windll.kernel32.CloseHandle(sei.hProcess)
+                log_text = ""
+                if dp_log.is_file():
+                    log_text = dp_log.read_text(encoding="mbcs", errors="replace")
+                low = log_text.lower()
+                if any(
+                    err in low
+                    for err in (
+                        "error",
+                        "utilizado por otro proceso",
+                        "being used by another process",
+                        "acceso denegado",
+                        "access is denied",
+                    )
+                ):
+                    ok = False
+                    # Extrae la primera línea con error para diagnóstico claro
+                    err_lines = [
+                        ln.strip()
+                        for ln in log_text.splitlines()
+                        if ln.strip()
+                        and any(
+                            k in ln.lower()
+                            for k in ("error", "proceso", "used", "denegado", "denied")
+                        )
+                    ]
+                    detail = (err_lines[0] if err_lines else log_text.strip())[:240]
+                elif log_text.strip():
+                    ok = True
+                    detail = "ok"
+                else:
+                    ok = False
+                    detail = "diskpart no produjo salida (verifica permiso UAC)."
     except (OSError, subprocess.TimeoutExpired) as err:
         detail = str(err)
+    finally:
+        for tmp_f in (dp_script, dp_log, dp_bat):
+            try:
+                tmp_f.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     after_bytes = os.path.getsize(cleaned) if os.path.isfile(cleaned) else before_bytes
     freed_bytes = max(0, before_bytes - after_bytes)
     if freed_bytes > 0:
-        from discoclaro.services import history_service
+        from discoclaro.services import history_service, summary_service
 
+        summary_service._summary_cache.clear()
         before_txt = format_bytes(before_bytes, ",")
         after_txt = format_bytes(after_bytes, ",")
         history_service.record_cleanup(
@@ -796,6 +886,8 @@ def compact_vhdx_assisted(
             freed_bytes,
             detail=f"Compactado de {before_txt} a {after_txt}",
         )
+    elif ok:
+        detail = "already_compact"
     return VhdxCompactResult(
         path=cleaned,
         before_bytes=before_bytes,

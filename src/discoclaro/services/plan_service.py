@@ -148,6 +148,19 @@ def _disk_cache_path(data_dir: Path | None) -> Path:
     return Path(directory) / "plan_cache.json"
 
 
+def invalidate_plan_cache(data_dir: Path | None = None) -> None:
+    """Invalida la caché en memoria y en disco (`plan_cache.json` y
+    `folder_sizes_cache.json`) tras una limpieza o comando para que los tamaños
+    de recomendaciones se recalculen en vivo."""
+    from discoclaro.adapters.inspectors import _folder
+
+    with _plan_lock:
+        _plan_cache.clear()
+        _folder.invalidate_folder_cache()
+        with contextlib.suppress(OSError):
+            _disk_cache_path(data_dir).unlink(missing_ok=True)
+
+
 def _load_disk_cached_plan(data_dir: Path | None) -> tuple[float, Plan] | None:
     path = _disk_cache_path(data_dir)
     if not path.is_file():

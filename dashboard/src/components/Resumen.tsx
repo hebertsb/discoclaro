@@ -274,9 +274,11 @@ function GrowthCard({ row }: { row: VolumeSummaryOut }) {
 function InteractivePlanSection({
   recommendations,
   onReload,
+  onSendToTerminal,
 }: {
   recommendations: Loadable<RecommendationOut[]>;
   onReload: () => void;
+  onSendToTerminal?: (command: string, autoRun?: boolean) => void;
 }) {
   const [selectedLevel, setSelectedLevel] = useState<PlanLevel>("safe");
   const [busyTarget, setBusyTarget] = useState<string | null>(null);
@@ -317,6 +319,10 @@ function InteractivePlanSection({
 
   async function handleExecuteCommand(item: RecommendationOut) {
     if (!item.suggested_command) return;
+    if (onSendToTerminal) {
+      onSendToTerminal(item.suggested_command, true);
+      return;
+    }
     setFeedback(null);
     setBusyTarget(item.target);
     try {
@@ -630,7 +636,11 @@ function InteractivePlanSection({
   );
 }
 
-export default function Resumen() {
+export default function Resumen({
+  onSendToTerminal,
+}: {
+  onSendToTerminal?: (command: string, autoRun?: boolean) => void;
+}) {
   const [summary, setSummary] = useState<Loadable<SummaryOut>>({ status: "loading" });
   const [recommendations, setRecommendations] = useState<Loadable<RecommendationOut[]>>({
     status: "loading",
@@ -808,6 +818,7 @@ export default function Resumen() {
       <InteractivePlanSection
         recommendations={recommendations}
         onReload={loadAll}
+        onSendToTerminal={onSendToTerminal}
       />
 
       {diskHealth.length > 0 && (

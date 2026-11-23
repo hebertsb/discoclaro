@@ -22,6 +22,21 @@ from discoclaro.services import tree_service
 
 SAMPLE_CHUNK_BYTES = 64 * 1024
 MIN_DUPLICATE_BYTES = 1 * 1024 * 1024  # 1 MB
+# OFFLINE | RECALL_ON_OPEN | RECALL_ON_DATA_ACCESS
+_CLOUD_ONLY_ATTRS = 0x1000 | 0x00040000 | 0x00400000
+_DUP_CACHE_TTL_S = 120.0
+_dup_cache: dict[str, tuple[float, DuplicatesOverview]] = {}
+
+
+def _is_cloud_placeholder(path: str) -> bool:
+    """Detecta archivos solo-nube (OneDrive Files On-Demand) para no disparar
+    descargas lentas al calcular la huella SHA-256."""
+    try:
+        st = os.stat(path)
+        attrs = getattr(st, "st_file_attributes", 0)
+        return bool(attrs & _CLOUD_ONLY_ATTRS)
+    except OSError:
+        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,8 +61,11 @@ class DuplicatesOverview:
 
 def _fast_file_fingerprint(path: str, size_bytes: int) -> str | None:
     """Calcula un hash SHA-256 rápido leyendo hasta 3 bloques de 64 KB (inicio,
-    centro y final del archivo). Si el archivo ya no está accesible en disco,
-    devuelve un identificador basado en el nombre base normalizado y tamaño."""
+    centro y final del archivo). Si el archivo es un placeholder solo-nube o no
+    está accesible en disco, usa un identificador por nombre base y tamaño."""
+    if _is_cloud_placeholder(path):
+        base = ntpath.basename(path).lower()
+        return f"meta:{base}:{size_bytes}"
     try:
         with open(path, "rb") as fh:
             hasher = hashlib.sha256()
@@ -106,12 +124,20 @@ def find_duplicates(
     limit: int = 40,
 ) -> DuplicatesOverview:
     """Encuentra grupos de archivos duplicados en la unidad seleccionada."""
-    directory = windows.default_data_dir() if data_dir is None else data_dir
-    database = directory / "discoclaro.db"
-    candidates: dict[str, tuple[str, int]] = {}
+    import time
+
     resolved_vol = (volume or "C:").strip().upper()
     if not resolved_vol.endswith(":"):
         resolved_vol = resolved_vol.rstrip("\\")
+    cache_key = f"{data_dir}:{resolved_vol}:{limit}"
+    cached = _dup_cache.get(cache_key)
+    if cached is not None and (time.monotonic() - cached[0]) < _DUP_CACHE_TTL_S:
+        return cached[1]
+
+    deadline = time.monotonic() + 6.0
+    directory = windows.default_data_dir() if data_dir is None else data_dir
+    database = directory / "discoclaro.db"
+    candidates: dict[str, tuple[str, int]] = {}
 
     if database.is_file():
         with Store.open_readonly(database) as store:
@@ -131,9 +157,12 @@ def find_duplicates(
         by_size[sz].append(orig_path)
 
     groups: list[DuplicateGroup] = []
-    for sz, paths in by_size.items():
+    # Prioriza tamaños grandes primero para encontrar los duplicados de mayor impacto
+    for sz, paths in sorted(by_size.items(), key=lambda kv: kv[0], reverse=True):
         if len(paths) < 2:
             continue
+        if time.monotonic() > deadline:
+            break
         by_fp: dict[str, list[str]] = defaultdict(list)
         for p in paths:
             fp = _fast_file_fingerprint(p, sz)
@@ -157,8 +186,10 @@ def find_duplicates(
     groups.sort(key=lambda g: g.reclaimable_bytes, reverse=True)
     top_groups = tuple(groups[:limit])
     total_reclaimable = sum(g.reclaimable_bytes for g in top_groups)
-    return DuplicatesOverview(
+    overview = DuplicatesOverview(
         volume=resolved_vol,
         total_reclaimable_bytes=total_reclaimable,
         groups=top_groups,
     )
+    _dup_cache[cache_key] = (time.monotonic(), overview)
+    return overview

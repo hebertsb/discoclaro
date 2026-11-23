@@ -156,13 +156,17 @@ export default function LimpiezaAvanzada() {
     setBanner(null);
     try {
       const res = await compactVhdxNow(disk.path);
-      if (res.succeeded) {
+      if (res.succeeded && res.freed_bytes > 0) {
         setBanner(
           `✓ Disco virtual compactado (${disk.name}): de ${formatGb(res.before_bytes)} a ${formatGb(res.after_bytes)} · Espacio real devuelto a Windows: ${formatGb(res.freed_bytes)}.`,
         );
+      } else if (res.succeeded) {
+        setBanner(
+          `ℹ Compactación completada en ${disk.name} (${formatGb(res.after_bytes)}): no había bloques vacíos adicionales para encoger todavía.`,
+        );
       } else {
         setBanner(
-          `⚠ Compactación finalizada con aviso (${res.detail}). Tamaño actual: ${formatGb(res.after_bytes)}.`,
+          `⚠ No se pudo compactar (${res.detail}). Tamaño actual: ${formatGb(res.after_bytes)}.`,
         );
       }
       loadVhdx();

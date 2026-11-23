@@ -33,7 +33,7 @@ function riskBadge(risk: RecommendationOut["risk"], level: RecommendationOut["le
 export default function Recomendaciones({
   onSendToTerminal,
 }: {
-  onSendToTerminal?: (command: string) => void;
+  onSendToTerminal?: (command: string, autoRun?: boolean) => void;
 }) {
   const [state, setState] = useState<Loadable<RecommendationOut[]>>({
     status: "loading",
@@ -70,6 +70,10 @@ export default function Recomendaciones({
 
   async function handleExecuteNow(item: RecommendationOut) {
     if (!item.suggested_command) return;
+    if (onSendToTerminal) {
+      onSendToTerminal(item.suggested_command, true);
+      return;
+    }
     setFeedback(null);
     setBusyTarget(item.target);
     try {

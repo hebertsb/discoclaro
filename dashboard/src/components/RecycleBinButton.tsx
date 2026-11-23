@@ -8,6 +8,18 @@ import type { RecycleBinStatusOut } from "../api/types";
 import { formatGb } from "../format";
 
 const BYTES_PER_GB = 1024 ** 3;
+const BYTES_PER_MB = 1024 ** 2;
+
+function formatBinSize(sizeBytes: number): string {
+  if (sizeBytes >= BYTES_PER_GB * 0.1) return formatGb(sizeBytes);
+  if (sizeBytes >= BYTES_PER_MB) {
+    return `${(sizeBytes / BYTES_PER_MB).toFixed(1).replace(".", ",")} MB`;
+  }
+  if (sizeBytes > 0) {
+    return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
+  }
+  return "0 MB";
+}
 
 function computeFillPercent(sizeBytes: number, itemCount: number): number {
   if (sizeBytes <= 0 && itemCount <= 0) return 0;
@@ -126,7 +138,7 @@ export default function RecycleBinButton({
       onClick={handleEmptyClick}
       title={
         hasTrash
-          ? `Papelera con ${formatGb(binStatus.size_bytes)} (${binStatus.item_count} elementos). Haz clic para vaciarla.`
+          ? `Papelera con ${formatBinSize(binStatus.size_bytes)} (${binStatus.item_count} elementos). Haz clic para vaciarla.`
           : "La Papelera de reciclaje está vacía"
       }
     >
@@ -242,7 +254,7 @@ export default function RecycleBinButton({
           <>
             Vaciar Papelera{" "}
             <strong className="bin-btn__amount">
-              {formatGb(binStatus.size_bytes)}
+              {formatBinSize(binStatus.size_bytes)}
             </strong>
             <span className="bin-btn__count">({binStatus.item_count})</span>
           </>

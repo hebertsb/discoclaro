@@ -1330,10 +1330,13 @@ def create_app(
 
     @app.post("/actions/trash", response_model=TrashBatchOut)
     def post_trash_paths(payload: TrashPathsIn) -> TrashBatchOut:
+        from discoclaro.services import plan_service
+
         try:
             result = actions_service.trash_paths_verified(payload.paths)
         except ActionError as error:
             raise _as_http_error(error.kind) from error
+        plan_service.invalidate_plan_cache(data_dir)
         return TrashBatchOut(
             items=[
                 TrashItemOut(
@@ -1349,12 +1352,15 @@ def create_app(
 
     @app.post("/actions/terminal", response_model=TerminalCommandOut)
     def post_terminal_command(payload: TerminalCommandIn) -> TerminalCommandOut:
+        from discoclaro.services import plan_service
+
         try:
             result = actions_service.execute_terminal_command(
                 payload.command, cwd=payload.cwd
             )
         except ActionError as error:
             raise _as_http_error(error.kind) from error
+        plan_service.invalidate_plan_cache(data_dir)
         return TerminalCommandOut(
             command=result.command,
             exit_code=result.exit_code,
@@ -1365,10 +1371,13 @@ def create_app(
 
     @app.post("/actions/clean-safe", response_model=BatchCleanOut)
     def post_clean_safe_batch() -> BatchCleanOut:
+        from discoclaro.services import plan_service
+
         try:
             res = actions_service.clean_safe_batch(data_dir)
         except ActionError as error:
             raise _as_http_error(error.kind) from error
+        plan_service.invalidate_plan_cache(data_dir)
         return BatchCleanOut(
             items=[
                 BatchCleanItemOut(

@@ -107,7 +107,11 @@ const SCREENS: NavItem[] = [
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("resumen");
-  const [terminalDraft, setTerminalDraft] = useState("");
+  const [terminalRequest, setTerminalRequest] = useState<{
+    command: string;
+    autoRun: boolean;
+    id: number;
+  } | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("light");
   const [topBanner, setTopBanner] = useState<string | null>(null);
 
@@ -155,8 +159,8 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, []);
 
-  function openInTerminal(command: string) {
-    setTerminalDraft(command);
+  function openInTerminal(command: string, autoRun = true) {
+    setTerminalRequest({ command, autoRun, id: Date.now() });
     setScreen("terminal");
   }
 
@@ -273,7 +277,7 @@ export default function App() {
           </div>
         )}
 
-        {screen === "resumen" && <Resumen />}
+        {screen === "resumen" && <Resumen onSendToTerminal={openInTerminal} />}
         {screen === "que-ocupa" && <QueOcupa />}
         {screen === "categorias" && <Categorias />}
         {screen === "crecimiento" && <Crecimiento />}
@@ -283,7 +287,12 @@ export default function App() {
         {screen === "programas" && <Programas />}
         {screen === "limites" && <Limites />}
         {screen === "avanzada" && <LimpiezaAvanzada />}
-        {screen === "terminal" && <TerminalView initialCommand={terminalDraft} />}
+        {screen === "terminal" && (
+          <TerminalView
+            pendingRequest={terminalRequest}
+            onConsumedRequest={() => setTerminalRequest(null)}
+          />
+        )}
       </div>
     </div>
   );

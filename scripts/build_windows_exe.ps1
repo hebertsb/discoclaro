@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Empaqueta DiscoClaro como aplicación standalone de Windows (`dist\DiscoClaro.exe`)
     con icono oficial, interfaz web compilada y modo 100% sin ventana de consola.

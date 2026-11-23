@@ -791,6 +791,7 @@ def restore_advice(
 # Constantes de MessageBoxW (user32.dll) para confirmación nativa de Windows.
 MB_YESNO = 0x00000004
 MB_ICONWARNING = 0x00000030
+MB_SYSTEMMODAL = 0x00001000
 MB_TOPMOST = 0x00040000
 MB_SETFOREGROUND = 0x00010000
 IDYES = 6
@@ -811,7 +812,13 @@ def confirm_native_dialog(
     `message_box` se puede inyectar para probar sin abrir ventanas reales.
     """
     box = message_box or _user32_message_box()
-    flags = MB_YESNO | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND
+    flags = (
+        MB_YESNO
+        | MB_ICONWARNING
+        | MB_SYSTEMMODAL
+        | MB_TOPMOST
+        | MB_SETFOREGROUND
+    )
     return box(0, message, title, flags) == IDYES
 
 
