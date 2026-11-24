@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Component, type ErrorInfo, type ReactNode, useEffect, useState } from "react";
 import {
   createDesktopShortcut,
   fetchCategories,
@@ -104,6 +104,66 @@ const SCREENS: NavItem[] = [
     group: "gestion",
   },
 ];
+
+class ScreenErrorBoundary extends Component<
+  { screenKey: string; children: ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidUpdate(prevProps: { screenKey: string }) {
+    if (prevProps.screenKey !== this.props.screenKey && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[DiscoClaro] Error al renderizar pantalla:", error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <main style={{ padding: "var(--space-5)", maxWidth: 960, margin: "0 auto" }}>
+          <section className="bento__card" style={{ padding: "var(--space-5)" }}>
+            <div className="bento__label">Ocurrió un error al mostrar esta vista</div>
+            <p className="bento__detail" style={{ marginTop: 8, fontFamily: "var(--font-mono)" }}>
+              {this.state.error.message || "Error inesperado de renderizado."}
+            </p>
+            <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+              <button
+                type="button"
+                className="term-btn term-btn--primary"
+                onClick={() => this.setState({ error: null })}
+              >
+                ↻ Reintentar
+              </button>
+              <button
+                type="button"
+                className="term-btn"
+                onClick={() => {
+                  try {
+                    localStorage.clear();
+                  } catch {
+                    // ignore
+                  }
+                  window.location.reload();
+                }}
+              >
+                Limpiar caché y recargar
+              </button>
+            </div>
+          </section>
+        </main>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("resumen");
@@ -277,22 +337,24 @@ export default function App() {
           </div>
         )}
 
-        {screen === "resumen" && <Resumen onSendToTerminal={openInTerminal} />}
-        {screen === "que-ocupa" && <QueOcupa />}
-        {screen === "categorias" && <Categorias />}
-        {screen === "crecimiento" && <Crecimiento />}
-        {screen === "recomendaciones" && (
-          <Recomendaciones onSendToTerminal={openInTerminal} />
-        )}
-        {screen === "programas" && <Programas />}
-        {screen === "limites" && <Limites />}
-        {screen === "avanzada" && <LimpiezaAvanzada />}
-        {screen === "terminal" && (
-          <TerminalView
-            pendingRequest={terminalRequest}
-            onConsumedRequest={() => setTerminalRequest(null)}
-          />
-        )}
+        <ScreenErrorBoundary screenKey={screen}>
+          {screen === "resumen" && <Resumen onSendToTerminal={openInTerminal} />}
+          {screen === "que-ocupa" && <QueOcupa />}
+          {screen === "categorias" && <Categorias />}
+          {screen === "crecimiento" && <Crecimiento />}
+          {screen === "recomendaciones" && (
+            <Recomendaciones onSendToTerminal={openInTerminal} />
+          )}
+          {screen === "programas" && <Programas />}
+          {screen === "limites" && <Limites />}
+          {screen === "avanzada" && <LimpiezaAvanzada />}
+          {screen === "terminal" && (
+            <TerminalView
+              pendingRequest={terminalRequest}
+              onConsumedRequest={() => setTerminalRequest(null)}
+            />
+          )}
+        </ScreenErrorBoundary>
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Component, type ReactNode, useEffect, useMemo, useState } from "react";
 import { defineChart } from "@tanstack/charts";
 import { treemap } from "@tanstack/charts/hierarchy/treemap";
 import { tooltip } from "@tanstack/charts/tooltip";
@@ -77,9 +77,24 @@ function sortFiles(items: LargeFileOut[], mode: SortMode): LargeFileOut[] {
 }
 
 function rowsFrom(tree: TreeOut): Row[] {
-  const rootName = tree.node ? shortName(tree.node.path) : tree.volume;
-  const topChildren = tree.children.slice(0, 18);
+  const rootName = tree?.node?.path ? shortName(tree.node.path) : (tree?.volume || "Disco");
+  const seen = new Set<string>([ROOT_ID]);
+  const rawChildren = Array.isArray(tree?.children) ? tree.children : [];
+  const topChildren = rawChildren
+    .filter((child) => {
+      if (!child || typeof child.path !== "string" || !child.path.trim()) return false;
+      if (typeof child.size_bytes !== "number" || !Number.isFinite(child.size_bytes) || child.size_bytes <= 0) {
+        return false;
+      }
+      if (seen.has(child.path)) return false;
+      seen.add(child.path);
+      return true;
+    })
+    .slice(0, 18);
   const rootSize = topChildren.reduce((sum, child) => sum + child.size_bytes, 0);
+  if (topChildren.length === 0 || rootSize <= 0) {
+    return [];
+  }
   return [
     { id: ROOT_ID, parentId: undefined, name: rootName, size: rootSize },
     ...topChildren.map((child) => ({
@@ -89,6 +104,30 @@ function rowsFrom(tree: TreeOut): Row[] {
       size: child.size_bytes,
     })),
   ];
+}
+
+class ChartErrorBoundary extends Component<
+  { resetKey: string; fallback: ReactNode; children: ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidUpdate(prevProps: { resetKey: string }) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
 }
 
 interface NodeDatum {
@@ -191,14 +230,15 @@ export default function QueOcupa() {
   }, [searchQuery, activeVolume]);
 
   useEffect(() => {
+    if (activeTab !== "duplicates") return;
     let cancelled = false;
     fetchDuplicates(activeVolume)
       .then((res) => {
         if (!cancelled) setDuplicatesData(res);
       })
       .catch(() => {
-        // Fallback client-side agrupando large_files por tamaño exacto si el servidor no se reinició aún
-        if (!cancelled && searchData) {
+        // Fallback client-side agrupando large_files por tamaño exacto si el servidor no respondió a tiempo
+        if (!cancelled && Array.isArray(searchData?.large_files)) {
           const bySize = new Map<number, string[]>();
           for (const lf of searchData.large_files) {
             const arr = bySize.get(lf.size_bytes) ?? [];
@@ -228,7 +268,7 @@ export default function QueOcupa() {
     return () => {
       cancelled = true;
     };
-  }, [activeVolume, searchData]);
+  }, [activeTab, activeVolume]);
 
   async function handleTrashDuplicateCopies(group: DuplicateGroupOut) {
     if (group.paths.length < 2) return;
@@ -253,25 +293,26 @@ export default function QueOcupa() {
     }
   }
 
-  const realRows = state.status === "ready" ? rowsFrom(state.data) : [];
-  const rows: Row[] =
-    realRows.length > 0
+  const rows = useMemo<Row[]>(() => {
+    const realRows = state.status === "ready" ? rowsFrom(state.data) : [];
+    return realRows.length > 0
       ? realRows
-      : [{ id: ROOT_ID, parentId: undefined, name: "", size: 0 }];
+      : [{ id: ROOT_ID, parentId: undefined, name: "", size: 1 }];
+  }, [state]);
 
-  const treemapDefinition = useMemo(
-    () =>
-      defineChart({
+  const treemapDefinition = useMemo(() => {
+    try {
+      return defineChart({
         marks: [
           treemap(rows, {
             nodeId: "id",
             parentId: "parentId",
             value: "size",
             color: (node) => node.id,
-            label: (node) => node.name,
+            label: (node) => node.data?.name ?? shortName(node.id),
             labelFill: "#ffffff",
             inset: 3,
-            round: true,
+            round: false,
             stroke: "var(--color-surface)",
           }),
         ],
@@ -279,9 +320,11 @@ export default function QueOcupa() {
         guides: false,
         margin: 0,
         tooltip,
-      }),
-    [rows],
-  );
+      });
+    } catch {
+      return null;
+    }
+  }, [rows]);
 
   function enterFolder(folder: NodeOut) {
     setActiveTab("folders");
@@ -336,23 +379,23 @@ export default function QueOcupa() {
     }, 1800);
   }
 
-  const children = state.status === "ready" ? state.data.children : [];
-  const totalBytesInLevel = children.reduce((s, c) => s + c.size_bytes, 0);
+  const children = state.status === "ready" && Array.isArray(state.data.children) ? state.data.children : [];
+  const totalBytesInLevel = children.reduce((s, c) => s + (c.size_bytes || 0), 0);
   const currentTitle =
     state.status === "ready"
       ? (state.data.node?.path ?? `${state.data.volume}\\`)
       : (activeVolume ?? "C:");
 
   const displayedFolders = sortFolders(
-    searchQuery.trim() && searchData ? searchData.folders : children,
+    searchQuery.trim() && Array.isArray(searchData?.folders) ? searchData.folders : children,
     sortMode,
   );
   const displayedLargeFiles = sortFiles(
-    searchData?.large_files ?? [],
+    Array.isArray(searchData?.large_files) ? searchData.large_files : [],
     sortMode,
   );
   const displayedRecentFiles = sortFiles(
-    searchData?.new_large_files ?? [],
+    Array.isArray(searchData?.new_large_files) ? searchData.new_large_files : [],
     sortMode,
   );
 
@@ -402,21 +445,21 @@ export default function QueOcupa() {
               className={`glass-tab${activeTab === "large-files" ? " glass-tab--active" : ""}`}
               onClick={() => setActiveTab("large-files")}
             >
-              Archivos Grandes ({searchData?.large_files.length ?? 0})
+              Archivos Grandes ({displayedLargeFiles.length})
             </button>
             <button
               type="button"
               className={`glass-tab${activeTab === "recent-files" ? " glass-tab--active" : ""}`}
               onClick={() => setActiveTab("recent-files")}
             >
-              Recientes ({searchData?.new_large_files.length ?? 0})
+              Recientes ({displayedRecentFiles.length})
             </button>
             <button
               type="button"
               className={`glass-tab${activeTab === "duplicates" ? " glass-tab--active" : ""}`}
               onClick={() => setActiveTab("duplicates")}
             >
-              Duplicados ({duplicatesData?.groups.length ?? 0})
+              Duplicados ({duplicatesData?.groups?.length ?? 0})
             </button>
           </div>
         </div>
@@ -512,12 +555,59 @@ export default function QueOcupa() {
             <p className="bento__detail">
               Haz clic en un bloque o en cualquier fila de la derecha para entrar a esa carpeta.
             </p>
-            <Chart
-              definition={treemapDefinition}
-              height={420}
-              ariaLabel="Tamaño de las carpetas, en rectángulos"
-              onSelect={drillDownFromChart}
-            />
+            {treemapDefinition && rows.length > 1 ? (
+              <ChartErrorBoundary
+                resetKey={`${currentTitle}:${rows.length}`}
+                fallback={
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+                      gap: 8,
+                      marginTop: 8,
+                    }}
+                  >
+                    {children.slice(0, 12).map((child, idx) => (
+                      <button
+                        key={child.path}
+                        type="button"
+                        onClick={() => enterFolder(child)}
+                        style={{
+                          padding: "14px 12px",
+                          borderRadius: 12,
+                          border: "none",
+                          background: categoryColor(idx),
+                          color: "#ffffff",
+                          textAlign: "left",
+                          cursor: "pointer",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 4,
+                        }}
+                      >
+                        <strong style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {shortName(child.path)}
+                        </strong>
+                        <span style={{ fontSize: 11, opacity: 0.9, fontFamily: "var(--font-mono)" }}>
+                          {formatGb(child.size_bytes)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                }
+              >
+                <Chart
+                  definition={treemapDefinition}
+                  height={420}
+                  ariaLabel="Tamaño de las carpetas, en rectángulos"
+                  onSelect={drillDownFromChart}
+                />
+              </ChartErrorBoundary>
+            ) : (
+              <p className="bento__detail" style={{ padding: "24px 0" }}>
+                No hay subcarpetas con tamaño mayor a 0 bytes en este nivel.
+              </p>
+            )}
           </section>
 
           {/* Columna 2: Lista interactiva de carpetas con redirección directa */}
